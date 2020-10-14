@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.metrics import pairwise_distances
 
 def graph_generation(n=20, bsz=16, graph_type=None):
     d = {}
@@ -60,8 +59,7 @@ def graph_generation(n=20, bsz=16, graph_type=None):
         dots = np.concatenate(dots_by_batch, axis=0)
     else:
         assert 0, 'unknown distribution: ' + str(graph_type['distribution'])
-    distances = np.array([pairwise_distances(dots[i, :, :]) for i in range(bsz)])
-    return dots, distances, d
+    return dots, d
 
 def pickup_and_delivery_generation(n=20, bsz=16, p_and_d=None):
     if p_and_d is None:
@@ -133,7 +131,7 @@ def demand_generation(n=20, bsz=16, demand_type=None, p_and_d=None):
         if not pd_flag:
             total_demand = np.zeros((bsz, n))
             for i in range(bsz):
-                total_demand[i, p_and_d[i, :, 0]] = demand[i]
+                total_demand[i, p_and_d[i, :, 0]] = -demand[i]
                 total_demand[i, p_and_d[i, :, 1]] = demand[i]
             demand = total_demand
     return demand
@@ -155,7 +153,7 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
             a = np.random.rand(bsz, n)
             b = np.zeros((bsz, n))
             for i in range(bsz):
-                for j in range(n):
+                for j in range(n):s
                     b[i,j] = np.random.rand()*(1-a[i,j]) + a[i,j]
             tw = np.zeros((bsz, n, 2))
             tw[:, :, 0] = a
@@ -179,7 +177,7 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
                     a_2[i,j] = np.random.rand()*(1-a_1[i,j]) + a_1[i,j]
             for i in range(bsz):
                 for j in range(n//2):
-                    b_2[i,j] = np.random.rand()*(1-a_1[i,j]) + a_1[i,j]                
+                    b_2[i,j] = np.random.rand()*(1-a_2[i,j]) + a_2[i,j]                
             tw = np.zeros((bsz, n, 2))
             tw[p_and_d[:, :, 0], 0] = a_1
             tw[p_and_d[:, :, 0], 1] = b_1
