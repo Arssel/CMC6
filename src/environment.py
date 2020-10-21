@@ -65,8 +65,8 @@ class LogEnv(gym.Env):
         self._features = np.concatenate((self._dots, self._demand, self._tw, self._pd), axis=2)
         self._distances = np.array([pairwise_distances(self._dots[i, :, :]) for i in range(self._bsz)])
         self.__set_parameters()
-        self.__init_mask()
-        return self._features, self._distances
+        self.init_mask()
+        return self._features, self._distances, self._mask_visited*self._mask_pd*self._mask_demand*self._mask_tw
         
     def __set_parameters(self):
         if self._flag['demand']:
@@ -126,7 +126,7 @@ class LogEnv(gym.Env):
         self._pd = np.concat((self._pd, pd), axis=1)    
         self._tw = np.concat((self._tw, tw), axis=1)
 
-    def __init_mask(self):
+    def init_mask(self):
         self._mask_visited = np.ones((self._bsz, self._n))
         self._mask_pd = np.ones((self._bsz, self._n))
         self._mask_demand = np.ones((self._bsz, self._n))
@@ -139,6 +139,7 @@ class LogEnv(gym.Env):
                 self._mask_demand[self._demand > 0] = 0
         elif flags['pd']:
             self._mask_pd[self._pairs[:,:,1]] = 0
+        return self._mask_visited*self._mask_pd*self._mask_demand*self._mask_tw
             
     def step(self, actions):
         if self._cur_route == []:

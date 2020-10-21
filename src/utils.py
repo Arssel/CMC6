@@ -200,3 +200,7 @@ def path_distance(matrix, path):
         distance += matrix[(batch_range, path[:, i-1]*num_nodes + path[:,i])]
     distance += matrix[(batch_range, path[:, i] * num_nodes + path[:, 0])]
     return distance
+
+def check_repeating_vertexes(vertexes):
+    mask = vertexes[:,1:] != vertexes[:,:-1]  
+    return mask
