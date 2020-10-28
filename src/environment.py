@@ -5,7 +5,8 @@ import gym
 from gym import spaces
 
 
-from src.utils import path_distance
+from src.utils import path_distance, graph_generation, pickup_and_delivery_generation,\
+    p_and_d_features, demand_generation, tw_generation
 from sklearn.metrics import pairwise_distances
 
 class LogEnv(gym.Env):
@@ -16,60 +17,77 @@ class LogEnv(gym.Env):
         self._bsz = batch_size
         self._opts = opts
 
-    def reset(self):
+    def reset(self, data={}):
+        if self._opts is None:
+            self._opts = {}
         if 'graph_type' not in self._opts:
-            self._opts['graph_type'] = None
+            self._opts['graph_type'] = {}
         if 'pickup_and_delivery' not in self._opts:
-            self._opts['pickup_and_delivery'] = None
+            self._opts['pickup_and_delivery'] = {}
         if 'demand_type' not in self._opts:
-            self._opts['demand_type'] = None
+            self._opts['demand_type'] = {}
         if 'tw_type' not in self._opts:
-            self._opts['tw_type'] = None
+            self._opts['tw_type'] = {}
         if 'supply' not in self._opts['demand_type']:
-            self._opts['demand_type']['supply'] = None
+            self._opts['demand_type']['supply'] = {}
           
         flags = {}
-        if self._opts['pickup_and_delivery'] is None:
+        if len(self._opts['pickup_and_delivery']) == 0:
             flags['pd'] = False
         else:
             flags['pd'] = True
-        if self._opts['demand_type'] is None:
+        if len(self._opts['demand_type']) == 1:
             flags['demand'] = False
         else:
             flags['demand'] = True
-        if self._opts['tw_type'] is None:
+        if len(self._opts['tw_type']) == 0:
             flags['tw'] = False
         else:
             flags['tw'] = True
-        if self._opts['demand_type']['supply'] is None:
-            flags['supply']
+        if len(self._opts['demand_type']['supply']) == 0:
+            flags['supply'] = False
+        else:
+            flags['supply'] = True
         self._flags = flags    
         
-        self._dots, _ = graph_generation(self._n, self._bsz, self._opts['graph_type']) 
-        self._pairs = pickup_and_delivery_generation(self._n, self._bsz, self._opts['pickup_and_delivery']) 
+        if 'dots' in data:
+            self._dots = data['dots']
+        else:
+            self._dots, _ = graph_generation(self._n, self._bsz, self._opts['graph_type']) 
+        if 'pairs' in data:
+            self._pairs = data['pairs']
+        else:
+            self._pairs = pickup_and_delivery_generation(self._n, self._bsz, self._opts['pickup_and_delivery']) 
         if self._pairs is not None:
             self._pd = p_and_d_features(self._pairs, self._dots)
         else:
+            self._pd = None
+        if 'demand' in data:
+            self._demand = data['demand']
+        else:
+            self._demand = demand_generation(self._n, self._bsz, self._opts['demand_type'], self._pd)
+        if 'tw' in data:
+            self._demand = data['tw']
+        else:
+            self._tw = tw_generation(self._n, self._bsz, self._opts['tw_type'], self._pd)
+        if self._pd is None:
             self._pd = np.zeros((self._bsz, self._n, 2))
-        self._demand = demand_generation(self._n, self._bsz, self._opts['demand_type'], pd)
-        self._tw = tw_generation(self._n, self._bsz, self._opts['tw_type'], pd)
-        
         if flags['demand'] and not flags['pd']:
             if 'depot' not in self._opts:
                 self._opts['depot'] = None
-            self._depot = self.__generate_depot()
+            self._depot = self.generate_depot(self._flags)
             self._flags['depot'] = True
         else:
             self._flags['depot'] = False
             
         self._features = np.concatenate((self._dots, self._demand, self._tw, self._pd), axis=2)
         self._distances = np.array([pairwise_distances(self._dots[i, :, :]) for i in range(self._bsz)])
-        self.__set_parameters()
+        self.set_parameters()
         self.init_mask()
         return self._features, self._distances, self._mask_visited*self._mask_pd*self._mask_demand*self._mask_tw
         
-    def __set_parameters(self):
-        if self._flag['demand']:
+    def set_parameters(self):
+        if self._flags['demand']:
             demand_type = self._opts['demand_type']
             if 'capacity' not in self._opts['demand_type']:
                 demand_type['capacity'] = None
@@ -80,27 +98,30 @@ class LogEnv(gym.Env):
                     self._capacity = 30
             else:
                 self._capacity = demand_type['capacity']
-        if self._flag['tw']:
+        if self._flags['tw']:
             tw_type = self._opts['tw_type']
             if 'service_time' not in tw_type:
                 tw_type['service_time'] = None
             if tw_type['service_time'] is None or tw_type['service_time'] == 'default':
-                self._service_time = 0.1
+                self._service_time = 0.005
             else:
                 self._service_time = tw_type['service_time']
         self._cur_cap = np.zeros((self._bsz))
         self._cur_time = np.zeros((self._bsz))
         
         if self._flags['demand'] and not self._flags['pd']:
-            self._cur_route = np.ones((self._bsz))*(self._n + 1)
+            self._cur_route = np.ones((self._bsz, 1))*(self._n + 1)
         else:
             self._cur_route = []
                 
-    def __generate_depot(self, flags):
+    def generate_depot(self, flags):
         total_demand = np.zeros((self._bsz, 1, 1))
         if 'supply' in self._opts['demand_type']:
             if self._opts['demand_type']['supply'] is not None:
                 total_demand = self._demand.sum(axis=1).reshape(self._bsz, -1, 1)
+        if 'depot' not in self._opts['demand_type']:
+            self._opts['demand_type']['depot'] = None
+        depot = self._opts['demand_type']['depot']
         if depot is None:
             coord = np.repeat(np.array([[0.5, 0.5]]), self._bsz, axis=0)
         else:
@@ -114,17 +135,17 @@ class LogEnv(gym.Env):
             tw = np.repeat(np.array([[0, 1]]), self._bsz, axis=0)
         else:
             tw = np.repeat(np.array([[0, 0]]), self._bsz, axis=0)
-        if flags['p_and_d']:
+        if flags['pd']:
             pd = np.repeat(np.array([[0.5, 0.5]]), self._bsz, axis=0)
         else:
             pd = np.repeat(np.array([[0, 0]]), self._bsz, axis=0)
         coord = coord.reshape(self._bsz, -1, 2)
         tw = tw.reshape(self._bsz, -1, 2)
         pd = pd.reshape(self._bsz, -1, 2)
-        self._dots = np.concat((self._dots, coord), axis=1)
-        self._demand = np.concat((self._demand, total_demand), axis=1)    
-        self._pd = np.concat((self._pd, pd), axis=1)    
-        self._tw = np.concat((self._tw, tw), axis=1)
+        self._dots = np.concatenate((self._dots, coord), axis=1)
+        self._demand = np.concatenate((self._demand, total_demand), axis=1)    
+        self._pd = np.concatenate((self._pd, pd), axis=1)    
+        self._tw = np.concatenate((self._tw, tw), axis=1)
 
     def init_mask(self):
         self._mask_visited = np.ones((self._bsz, self._n))
@@ -132,34 +153,37 @@ class LogEnv(gym.Env):
         self._mask_demand = np.ones((self._bsz, self._n))
         self._mask_tw = np.ones((self._bsz, self._n))
         if self._flags['demand'] and not self._flags['pd']:
-            self._mask_visited = np.append((self._mask_visited, np.ones(self._bsz, 1)), axis=1)
-            self._mask_demand = np.append((self._mask_demand, np.ones(self._bsz, 1)), axis=1)
-            self._mask_tw = np.append((self._mask_tw, np.ones(self._bsz, 1)), axis=1)
+            self._mask_visited = np.append(self._mask_visited, np.ones((self._bsz, 1)), axis=1)
+            self._mask_demand = np.append(self._mask_demand, np.ones((self._bsz, 1)), axis=1)
+            self._mask_tw = np.append(self._mask_tw, np.ones((self._bsz, 1)), axis=1)
+            self._mask_pd = np.append(self._mask_pd, np.ones((self._bsz, 1)), axis=1)
             if self._flags['supply']:
                 self._mask_demand[self._demand > 0] = 0
-        elif flags['pd']:
+        elif self._flags['pd']:
             self._mask_pd[self._pairs[:,:,1]] = 0
         return self._mask_visited*self._mask_pd*self._mask_demand*self._mask_tw
             
     def step(self, actions):
-        if self._cur_route == []:
+        if len(self._cur_route) == 0:
             self._cur_route = actions
         else:
             self._cur_route = np.append(self._cur_route, actions, axis=1)
-        self._mask_visited[actions] = 0
         r = np.arange(self._bsz)
-        if self._flag['pd']:
+        self._mask_visited[r, actions.squeeze()] = 0
+        #print(self._mask_visited)
+        if self._flags['pd']:
             for i in range(len(actions)):
                 if actions[i] in self._pairs[i, :, 0]:
                     self._mask_pd[i, self._pairs[i, actions[i], 0]] = 0
                     self._mask_pd[i, self._pairs[i, actions[i], 1]] = 1
         if self._flags['demand'] and not self._flags['pd']:
-            if not flags['supply']:
-                self._mask_visited[actions != self._n + 1, -1] = 1
+            if not self._flags['supply']:
+                self._mask_visited[(actions != self._n).squeeze(1), -1] = 1
                 self._mask_visited[self._mask_visited.sum(axis=1) == 0, -1] = 1
-                self._cur_cap[actions == self._n + 1] = 0
-                self._cur_cap += self._demand[r, actions]
-                self._mask_demand = self._cur_cap + self._demand <= self._capacity
+                self._cur_cap += self._demand[r, actions.squeeze(1),:].squeeze()
+                self._cur_cap[(actions == self._n).squeeze(1)] = 0
+                self._mask_demand = (self._cur_cap + self._demand.squeeze(2)) <= self._capacity
+                self._mask_demand[:, -1] = 1
             else:
                 self._cur_cap -= self.demand[r, actions]
                 self._mask_demand = 0 <= (self._cur_cap - self._demand) & (self._cur_cap - self._demand) <= self._capacity

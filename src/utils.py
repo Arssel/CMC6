@@ -1,8 +1,9 @@
 import numpy as np
+import torch 
 
 def graph_generation(n=20, bsz=16, graph_type=None):
     d = {}
-    if graph_type is None:
+    if graph_type is None or len(graph_type) == 0:
         dots = np.random.rand(bsz, n, 2)
     elif graph_type['distribution'] == 'uniform':
         dots = np.random.rand(bsz, n, 2)
@@ -62,7 +63,7 @@ def graph_generation(n=20, bsz=16, graph_type=None):
     return dots, d
 
 def pickup_and_delivery_generation(n=20, bsz=16, p_and_d=None):
-    if p_and_d is None:
+    if p_and_d is None or len(p_and_d) == 0:
         return None
     else:
         if p_and_d['pickup_and_delievery'] == True:
@@ -89,13 +90,13 @@ def p_and_d_features(pairs, dots):
     return pd_features
         
 def demand_generation(n=20, bsz=16, demand_type=None, p_and_d=None):
-    if p_and_d is None:
+    if p_and_d is None or len(p_and_d) == 0:
         pd_flag = True
     else:
         assert n % 2 != 0, 'even number of vertxes needed'
         pd_flag = False
-    if demand_type is None:
-        demand = np.zeros((bsz, n))
+    if demand_type is None or len(demand_type) == 1:
+        demand = np.zeros((bsz, n, 1))
         return demand
     else:
         if demand_type['distribution'] == 'uniform':
@@ -105,18 +106,18 @@ def demand_generation(n=20, bsz=16, demand_type=None, p_and_d=None):
                 max_demand = demand_type['max_demand']
             demand_range = np.arange(1, max_demand+1)
             if pd_flag:
-                demand = np.random.choice(demand_range, size=(bsz, n))
+                demand = np.random.choice(demand_range, size=(bsz, n, 1))
             else:
-                demand = np.random.choice(demand_range, size=(bsz, n//2))
+                demand = np.random.choice(demand_range, size=(bsz, n//2, 1))
         elif demand_type['distribution'] == 'poisson':
             if demand_type['lambda'] ==  'default':
                 l = 3.5
             else:
                 l = demand_type['lambda']
             if pd_flag:
-                demand = np.random.poisson(l, size=(bsz, n)) + 1
+                demand = np.random.poisson(l, size=(bsz, n, 1)) + 1
             else:
-                demand = np.random.poisson(l, size=(bsz, n//2)) + 1
+                demand = np.random.poisson(l, size=(bsz, n//2, 1)) + 1
             demand[demand > demand_type['capacity']] = demand_type['capacity']
         else:
             assert 0, 'unknown demand distribution: ' + str(demand_type['distribution'])
@@ -129,10 +130,10 @@ def demand_generation(n=20, bsz=16, demand_type=None, p_and_d=None):
                 supply = -(2*np.random.binomial(size=(bsz, n), n=1, p=supply_prob)-1)
                 demand = supply*demand
         if not pd_flag:
-            total_demand = np.zeros((bsz, n))
+            total_demand = np.zeros((bsz, n, 1))
             for i in range(bsz):
-                total_demand[i, p_and_d[i, :, 0]] = -demand[i]
-                total_demand[i, p_and_d[i, :, 1]] = demand[i]
+                total_demand[i, p_and_d[i, :, 0], :] = -demand[i]
+                total_demand[i, p_and_d[i, :, 1], :] = demand[i]
             demand = total_demand
     return demand
 
@@ -142,7 +143,7 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
     else:
         assert n % 2 != 0, 'even number of vertxes needed'
         pd_flag = False
-    if tw_type is None:
+    if tw_type is None or len(tw_type) == 0:
         return np.zeros((bsz, n, 2))
     elif pd_flag:
         if tw_type['distribution'] == 'half':
@@ -153,7 +154,7 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
             a = np.random.rand(bsz, n)
             b = np.zeros((bsz, n))
             for i in range(bsz):
-                for j in range(n):s
+                for j in range(n):
                     b[i,j] = np.random.rand()*(1-a[i,j]) + a[i,j]
             tw = np.zeros((bsz, n, 2))
             tw[:, :, 0] = a
@@ -191,6 +192,25 @@ def path_distance(matrix, path):
     :param path: - a list of N nodes, representing TSP solution.
     """
     batch_size = matrix.shape[0]
+    N = matrix.shape[1]
+    assert N == path.shape[1], \
+        "Number of visited nodes must be equal to matrix shape:" \
+        f"Expected {N}, but got {len(path)}."
+    assert (path < N).all()
+    distance = np.array([0.] * batch_size)
+    matrix = matrix.reshape(-1, N**2)
+    batch_range = np.arange(batch_size)
+    for i in range(1, N):
+        distance += matrix[(batch_range, path[:, i-1]*N + path[:,i])]
+    distance += matrix[(batch_range, path[:, i] * N + path[:, 0])]
+    return distance
+
+def path_distance_new(matrix, path):
+    """
+    :param matrix: - an NxN matrix representing the TSP graph distances.
+    :param path: - a list of N nodes, representing TSP solution.
+    """
+    batch_size = matrix.shape[0]
     N = path.shape[1]
     num_nodes = matrix.shape[1]
     distance = np.array([0.] * batch_size)
@@ -202,5 +222,6 @@ def path_distance(matrix, path):
     return distance
 
 def check_repeating_vertexes(vertexes):
-    mask = vertexes[:,1:] != vertexes[:,:-1]  
+    mask = vertexes[:,1:] != vertexes[:,:-1] 
+    mask = torch.cat((torch.ones((mask.shape[0], 1), dtype=torch.bool), mask), dim=1)
     return mask
