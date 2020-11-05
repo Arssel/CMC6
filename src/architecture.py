@@ -25,7 +25,9 @@ class EncoderLayer(nn.Module):
         self.ff = nn.Sequential(nn.Linear(dm, ff_dim), nn.ReLU(), nn.Linear(ff_dim, dm))
         
     def forward(self, x):
+        x = x.permute(1, 0, 2)
         x = self.s_att(x, x, x)[0] + x
+        x = x.permute(1, 0, 2)
         x = self.batch_norm_1(x.transpose(-1, -2)).transpose(-1, -2)
         x = self.ff(x) + x
         x = self.batch_norm_2(x.transpose(-1, -2)).transpose(-1, -2)

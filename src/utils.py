@@ -66,16 +66,16 @@ def pickup_and_delivery_generation(n=20, bsz=16, p_and_d=None):
     if p_and_d is None or len(p_and_d) == 0:
         return None
     else:
-        if p_and_d['pickup_and_delievery'] == True:
-            assert n % 2 != 0, 'even number of vertxes needed'
+        if p_and_d['pickup_and_delivery'] == True:
+            assert n % 2 == 0, 'even number of vertxes needed'
             pairs = []
             for j in range(bsz):
                 permutation = np.random.permutation(np.arange(n))
-                pair = np.zeros(n//2, 2)
+                pair = np.zeros((n//2, 2), dtype=int)
                 pair[:, 0] = permutation[::2]
                 pair[:, 1] = permutation[1::2]
                 pairs.append(pair[np.newaxis,:,:])
-            np.concatenate(pairs, axis = 0)
+            pairs = np.concatenate(pairs, axis = 0)
             return pairs
         else:
             return None
@@ -85,15 +85,15 @@ def p_and_d_features(pairs, dots):
     n = dots.shape[1]
     pd_features = np.zeros(dots.shape)
     for i in range(bsz):
-        pd_features[i, pairs[i, :, 0], :] = dots[i][pairs[i, :, 1],:]
-        pd_features[i, pairs[i, :, 1], :] = dots[i][pairs[i, :, 0],:]
+        pd_features[i, pairs[i, :, 0], :] = dots[i, pairs[i, :, 1],:]
+        pd_features[i, pairs[i, :, 1], :] = dots[i, pairs[i, :, 0],:]
     return pd_features
         
 def demand_generation(n=20, bsz=16, demand_type=None, p_and_d=None):
     if p_and_d is None or len(p_and_d) == 0:
         pd_flag = True
     else:
-        assert n % 2 != 0, 'even number of vertxes needed'
+        assert n % 2 == 0, 'even number of vertxes needed'
         pd_flag = False
     if demand_type is None or len(demand_type) == 1:
         demand = np.zeros((bsz, n, 1))
@@ -141,7 +141,7 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
     if p_and_d is None:
         pd_flag = True
     else:
-        assert n % 2 != 0, 'even number of vertxes needed'
+        assert n % 2 == 0, 'even number of vertxes needed'
         pd_flag = False
     if tw_type is None or len(tw_type) == 0:
         return np.zeros((bsz, n, 2))
@@ -162,7 +162,7 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
         else:
             assert 0, 'unknown demand distribution: ' + str(demand_type['distribution'])
     else:
-        assert n % 2 != 0, 'even number of vertex needed'
+        assert n % 2 == 0, 'even number of vertex needed'
         if tw_type['distribution'] == 'half':
             tw = np.zeros((bsz, n, 2))
             tw[p_and_d[:, :, 0], 0] = 0
@@ -172,6 +172,8 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
         elif tw_type['distribution'] == 'uniform':
             a_1 = np.random.rand(bsz, n//2)
             b_1 = np.zeros((bsz, n//2))
+            a_2 = np.zeros((bsz, n//2))
+            b_2 = np.zeros((bsz, n//2))
             for i in range(bsz):
                 for j in range(n//2):
                     b_1[i,j] = np.random.rand()*(1-a_1[i,j]) + a_1[i,j]
@@ -180,10 +182,11 @@ def tw_generation(n=20, bsz=16, tw_type=None, p_and_d=None):
                 for j in range(n//2):
                     b_2[i,j] = np.random.rand()*(1-a_2[i,j]) + a_2[i,j]                
             tw = np.zeros((bsz, n, 2))
-            tw[p_and_d[:, :, 0], 0] = a_1
-            tw[p_and_d[:, :, 0], 1] = b_1
-            tw[p_and_d[:, :, 1], 0] = a_2
-            tw[p_and_d[:, :, 1], 1] = b_2
+            for i in range(p_and_d.shape[0]):
+                tw[i, p_and_d[i, :, 0], 0] = a_1[i]
+                tw[i, p_and_d[i, :, 0], 1] = b_1[i]
+                tw[i, p_and_d[i, :, 1], 0] = a_2[i]
+                tw[i, p_and_d[i, :, 1], 1] = b_2[i]
     return tw
 
 def path_distance(matrix, path):

@@ -63,16 +63,18 @@ def train(encoder, decoder, opts, device="cpu", batch_size=256, epochs=200, T=40
                 if t == 0:
                     vertexes = v
                     probs = p
+                    log_probs = torch.log(p)
                 else:
                     vertexes = torch.cat((vertexes, v), dim=1)
-                    probs = torch.cat((probs, p), dim=1)
+                    probs = probs*p
+                    log_probs = log_probs + torch.log(p)
                 mask, flag_done = env.step(v)
                 t += 1
-            routes_length = path_distance(distances, vertexes)
-            repeat_mask = check_repeating_vertexes(vertexes)
-            probs[repeat_mask == 0] = 1
-            log_probs = torch.log(probs)
-            
+            with torch.no_grad():
+                routes_length = path_distance(distances, vertexes)
+#            repeat_mask = check_repeating_vertexes(vertexes)
+#            with torch.no_grad():
+#                log_probs[repeat_mask == 0] = 0
             mask = env.init_mask()
             env.set_parameters()
             
@@ -91,7 +93,8 @@ def train(encoder, decoder, opts, device="cpu", batch_size=256, epochs=200, T=40
             greedy_routes_length = path_distance(distances, gr_vertexes)
             with torch.no_grad():
                 delta = torch.Tensor(routes_length - greedy_routes_length).to(device)
-            loss = (delta.squeeze()*log_probs.sum(axis=1).squeeze()).mean()
+            #print((delta.squeeze()*log_probs.squeeze()).shape)
+            loss = (delta.squeeze()*log_probs.squeeze()).sum()
             loss.backward()
             writer.add_scalar('Loss', loss, global_iteration)
             writer.add_scalar('Sample Reward', -routes_length.mean(), global_iteration)
