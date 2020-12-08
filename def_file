@@ -1,0 +1,33 @@
+Bootstrap: docker
+From: nvidia/cuda:10.0-runtime-ubuntu18.04
+
+%files
+	src /home
+	def_file /home
+	requirements.txt /home
+	run.py /home
+
+%post
+	
+  apt-get update -y
+    
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        software-properties-common
+    add-apt-repository universe
+    
+    apt-get update -y
+
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        python3 \
+        python3-tk \
+        python3-pip \
+        python3-distutils \
+        python3-setuptools
+    # Reduce the size of the image by deleting the package lists we downloaded,
+
+        rm -rf /var/lib/apt/lists/*
+
+    	pip3 install --no-cache-dir -r /home/requirements.txt
+
+%runscript
+    python3 /home/run.py $*

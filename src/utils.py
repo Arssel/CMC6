@@ -203,6 +203,7 @@ def path_distance(matrix, path):
     distance = np.array([0.] * batch_size)
     matrix = matrix.reshape(-1, N**2)
     batch_range = np.arange(batch_size)
+    path = path.squeeze()
     for i in range(1, N):
         distance += matrix[(batch_range, path[:, i-1]*N + path[:,i])]
     distance += matrix[(batch_range, path[:, i] * N + path[:, 0])]
@@ -225,6 +226,21 @@ def path_distance_new(matrix, path):
     return distance
 
 def check_repeating_vertexes(vertexes):
-    mask = vertexes[:,1:] != vertexes[:,:-1] 
-    mask = torch.cat((torch.ones((mask.shape[0], 1), dtype=torch.bool), mask), dim=1)
+    bsz = vertexes.shape[0]
+    mask = vertexes[:,1:] != vertexes[:,:-1]
+    mask = torch.cat((torch.ones((bsz, 1), dtype=bool), mask), dim=1)
     return mask
+
+def check_missing_vertexes(vertexes, flags, opts):
+    penalties = []
+    for b in vertexes:
+        if flags['multi_depot']:
+            n = b.shape[0] - opts['multi_depot']['depot_num']
+        elif (flags['demand'] and not flags['p_and_d']):
+            n = b.shape[0] - 1
+        else:
+            n = b.shape[0]
+        left = set(np.arange(n)) - set(b[:n])
+        penalties.append(len(left))
+    return np.array(penalties)
+        
