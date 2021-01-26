@@ -31,20 +31,6 @@ def parse_flags(flags):
     
         
 def train(model, opts, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, problem_size=20, decay=0.8):
-    ''' 
-    actor - Actor class for action choice
-    critic - Critic class for state evaluation
-    device - name of device to train on
-    batch_size - batch size parameter
-    gamma - discounting factor for reward
-    lr - learning rate
-    epochs - number of epochs to train
-    T - number of improvement steps
-    TSP_size - the number of points in TSP problem
-    n - the number of steps to evaluate the Bellman function
-    '''
-   
-    
     env = LogEnv(n=problem_size, batch_size=batch_size, opts=opts)
     if problem_size == 'random':
         n_range = np.arange(20, 80)
@@ -55,6 +41,8 @@ def train(model, opts, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4,
         greedy_model = AttentionModel().to(device)
     
     global_iteration = 0
+    loss_list = []
+    reward_list = []
     for e in tqdm(range(epochs), leave=False):
         
         with torch.no_grad():
@@ -82,15 +70,18 @@ def train(model, opts, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4,
             log_prob_tensor = torch.stack(log_prob_seq, 1).squeeze()
             route = torch.tensor(env._cur_route, dtype=int)
             mask = check_repeating_vertexes(route)
-            if env._flags['demand'] and not env._flags['pd']:
+            if env._flags['demand'] or env._flags['pd'] or env._flags['tw']:
                 log_prob_tensor[mask[:, 1:] == 0] = 0
             else:
                 log_prob_tensor[mask == 0] = 0
             with torch.no_grad():
-                routes_length = path_distance_new(distances, route)
                 if env._flags['tw']:
-                    routes_length += check_missing_vertexes(route, env._flags, opts)*np.sqrt(2)
-                
+                    routes_length = path_distance_new(env._time_d, route)
+                    routes_length += check_missing_vertexes(route, env._flags, opts, problem_size)*10
+                else:
+                    routes_length = path_distance_new(distances, route)
+                    
+            #print(check_missing_vertexes(route, env._flags, opts, problem_size)[0])
             
             
             if e > 0:
@@ -110,7 +101,10 @@ def train(model, opts, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4,
                 gr_route = torch.tensor(env._cur_route, dtype=int)
                 greedy_routes_length = path_distance_new(distances, gr_route)
                 if env._flags['tw']:
-                    greedy_routes_length += check_missing_vertexes(gr_route, env._flags, opts)*2*np.sqrt(2)
+                    greedy_routes_length = path_distance_new(env._time_d, gr_route)
+                    greedy_routes_length += check_missing_vertexes(gr_route, env._flags, opts, problem_size)*10
+                else:
+                    greedy_routes_length = path_distance_new(distances, gr_route)
                 with torch.no_grad():
                     delta = torch.Tensor(routes_length - greedy_routes_length).to(device)
                     
@@ -123,7 +117,10 @@ def train(model, opts, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4,
                     delta = torch.Tensor(routes_length - M).to(device)
             
             loss = (delta.squeeze()*log_prob_tensor.sum(dim=1).squeeze()).mean()
+            loss_list.append(loss.detach().to('cpu'))
+            reward_list.append(routes_length.mean())
             optimizer.zero_grad()
+            #print(env._cur_route[0])
             loss.backward()
             #writer.add_scalar('Loss', loss, global_iteration)
             #writer.add_scalar('Sample Reward', -routes_length.mean(), global_iteration)
@@ -132,4 +129,4 @@ def train(model, opts, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4,
     problem_name = parse_flags(env._flags)
     time_point = time.asctime()[4:].replace(':', '_').replace(' ', '_')
     file_name = problem_name + '_' + str(problem_size) + '_' + time_point
-    return model.state_dict(), file_name
+    return model.state_dict(), file_name, loss_list, reward_list

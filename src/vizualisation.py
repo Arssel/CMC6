@@ -1,6 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from celluloid import Camera
+import torch
 
 from IPython.display import clear_output
 
@@ -38,9 +39,9 @@ def demonstration(env, opts, actions_ext=None):
 
     plt.ion()
     if flags['demand'] and not flags['pd']:
-        n = env._n + 1
+        n = env.n + 1
     else:
-        n = env._n
+        n = env.n
     p = env._dots.squeeze()
     if flags['pd']:
         pairs = env._pairs.squeeze()
@@ -90,7 +91,7 @@ def demonstration(env, opts, actions_ext=None):
         plt.pause(0.05)
         fig.clf()
         if actions_ext is None:
-            action = np.array(input(), dtype=int).reshape(-1,1)
+            action = torch.tensor(int(input()), dtype=int).reshape(-1,1)
         else:
             action = actions_ext[t]
         if t == 0:
@@ -161,9 +162,9 @@ def action_animation(env, opts, actions_ext, file_name, intervals=1):
         flags['supply'] = True
 
     if flags['demand'] and not flags['pd']:
-        n = env._n + 1
+        n = env.n + 1
     else:
-        n = env._n
+        n = env.n
     p = env._dots.squeeze()
     if flags['pd']:
         pairs = env._pairs.squeeze()

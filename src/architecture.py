@@ -74,7 +74,6 @@ class Decoder(nn.Module):
         bsz = x.shape[0]
         graph_size = x.shape[1]
         K, V, K_lg = precomputed
-        
         if t == 0:
             if flags['demand'] and not flags['pd']:
                 self.first = x[:, -1, :].squeeze(1)
@@ -85,10 +84,6 @@ class Decoder(nn.Module):
                 #h_c = torch.cat((h_g, self.v.expand((bsz, 2*self.hid_dim)), context), dim=1)
                 h_c = torch.cat((h_g, zeros, context), dim=1)
         else:
-            #print(h_g.shape)
-            #print(self.first.shape)
-            #print(self.last.shape)
-            #print(context.shape)
             h_c = torch.cat((h_g, self.first, self.last, context),dim=1)
         h_c = h_c.unsqueeze(1)
         Q = self.lin_q(h_c)
@@ -97,7 +92,7 @@ class Decoder(nn.Module):
         mask_for_transform = torch.Tensor(mask[:, None, None, :]).expand(bsz, self.num_head, 1, graph_size)
         scale = torch.sqrt(torch.tensor(self.head_dim, dtype=float)).to(x.device)
         Q = Q.view(bsz, -1, self.num_head, self.head_dim).permute(0, 2, 1, 3)
-        
+
 
         QK_norm = torch.matmul(Q, K.permute(0, 1, 3, 2)) / scale
         QK_norm[mask_for_transform == 0] = self.infty.to(x.device)

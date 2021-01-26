@@ -14,7 +14,7 @@ def pairwise_distance(X, p):
         dist = (np.abs(X[:,:,:,None] - X.transpose(0,2,1)[:, None, :, :])**p).sum(axis=2)**(1/p)
     return dist
 
-class LogEnv(gym.Env):
+class LogEnv_old(gym.Env):
     
     def __init__(self, n = 20, batch_size = 16, opts=None):
         super().__init__()
@@ -81,7 +81,7 @@ class LogEnv(gym.Env):
             self._tw = tw_generation(self._n, self._bsz, self._opts['tw_type'], self._pairs)
         if self._pd is None:
             self._pd = np.zeros((self._bsz, self._n, 2))
-        if flags['demand'] or flags['pd'] or flags['tw']:
+        if flags['demand'] and not flags['pd']:
             if 'depot' not in self._opts:
                 self._opts['depot'] = None
             self._depot = self.generate_depot()
@@ -129,18 +129,19 @@ class LogEnv(gym.Env):
         self._cur_cap = np.zeros((self._bsz))
         self._cur_time = np.zeros((self._bsz))
         
-        if self._flags['demand'] or self._flags['pd'] or self._flags['tw']:
-            self._cur_route = np.ones((self._bsz, 1), dtype=np.int)*(self._n)
+        if self._flags['demand'] and not self._flags['pd']:
+            self._cur_route = np.ones((self._bsz, 1))*(self._n)
         else:
             self._cur_route = []
                 
     def generate_depot(self):
         total_demand = np.zeros((self._bsz, 1, 1))
-        if self._flags['supply']:
-            total_demand = self._demand.sum(axis=1).reshape(self._bsz, -1, 1)
-        if 'depot' not in self._opts:
-            self._opts['depot'] = None
-        depot = self._opts['depot']
+        if 'supply' in self._opts['demand_type']:
+            if self._opts['demand_type']['supply'] is not None:
+                total_demand = self._demand.sum(axis=1).reshape(self._bsz, -1, 1)
+        if 'depot' not in self._opts['demand_type']:
+            self._opts['demand_type']['depot'] = None
+        depot = self._opts['demand_type']['depot']
         if depot is None:
             coord = np.repeat(np.array([[0.5, 0.5]]), self._bsz, axis=0)
         else:
@@ -150,13 +151,12 @@ class LogEnv(gym.Env):
                 coord = np.repeat(np.array([[0.5, 0.5]]), self._bsz, axis=0)
             else:
                 coord = np.repeat(np.array([depot['distribution']]), self._bsz, axis=0)
-        #print(coord)
         if self._flags['tw']:
             tw = np.repeat(np.array([[0, 1]]), self._bsz, axis=0)
         else:
             tw = np.repeat(np.array([[0, 0]]), self._bsz, axis=0)
         if self._flags['pd']:
-            pd = coord
+            pd = np.repeat(np.array([[0.5, 0.5]]), self._bsz, axis=0)
         else:
             pd = np.repeat(np.array([[0, 0]]), self._bsz, axis=0)
         coord = coord.reshape(self._bsz, -1, 2)
@@ -173,14 +173,14 @@ class LogEnv(gym.Env):
         self._mask_pd = np.ones((self._bsz, self._n), dtype=int)
         self._mask_demand = np.ones((self._bsz, self._n), dtype=int)
         self._mask_tw = np.ones((self._bsz, self._n), dtype=int)
-        if self._flags['demand'] or self._flags['pd'] or self._flags['tw']:
+        if self._flags['demand'] and not self._flags['pd']:
             self._mask_visited = np.append(self._mask_visited, np.zeros((self._bsz, 1), dtype=int), axis=1)
             self._mask_demand = np.append(self._mask_demand, np.ones((self._bsz, 1), dtype=int), axis=1)
             self._mask_tw = np.append(self._mask_tw, np.ones((self._bsz, 1), dtype=int), axis=1)
             self._mask_pd = np.append(self._mask_pd, np.ones((self._bsz, 1), dtype=int), axis=1)
             if self._flags['supply']:
                 self._mask_demand[self._demand > 0] = 0
-        if self._flags['pd']:
+        elif self._flags['pd']:
             for i in range(self._bsz):
                 self._mask_pd[i, self._pairs[i,:,1]] = 0
         return self._mask_visited*self._mask_pd*self._mask_demand*self._mask_tw
@@ -198,8 +198,7 @@ class LogEnv(gym.Env):
                     source = self._pairs[i, :, 0] == actions.numpy()[i]
                     self._mask_pd[i, self._pairs[i, source, 0]] = 0
                     self._mask_pd[i, self._pairs[i, source, 1]] = 1
-                elif actions.numpy()[i] in self._pairs[i, :, 1]:
-                    self._mask_pd[i, actions.numpy()[i]] = 0
+                    
         if self._flags['demand'] and not self._flags['pd']:
             if not self._flags['supply']:
                 if self._bsz != 1:
@@ -227,13 +226,10 @@ class LogEnv(gym.Env):
             if self._cur_route.shape[1] == 1:
                 self._cur_time += self._service_time + (self._tw[r, actions.squeeze(), 0] - self._cur_time)
             else:
-                a_sq = actions.squeeze().numpy()
-                s_c_r = self._cur_route[:, -2].squeeze()
-                #print(a_sq, s_c_r, r)
                 self._cur_time += self._service_time + \
-                    (self._tw[r, a_sq, 0] >= self._cur_time + self._time_d[r, s_c_r, a_sq])*(self._tw[r, a_sq, 0] - self._cur_time) +\
-                    (self._tw[r, a_sq, 0] < self._cur_time + self._time_d[r, s_c_r, a_sq])*(self._time_d[r, s_c_r, a_sq])
-            self._mask_tw = self._tw[:,:,1] > self._cur_time.reshape(-1, 1) + self._time_d[r, a_sq]
+                    (self._tw[r, actions.squeeze(), 0] >= self._cur_time + self._time_d[r, self._cur_route[:, -2].squeeze(), actions.squeeze()])*(self._tw[r, actions.squeeze(), 0] - self._cur_time) +\
+                    (self._tw[r, actions.squeeze(), 0] < self._cur_time + self._time_d[r, self._cur_route[:, -2].squeeze(), actions.squeeze()])*(self._time_d[r, self._cur_route[:, -2].squeeze(), actions.squeeze()])
+            self._mask_tw = self._tw[:,:,1] > self._cur_time.reshape(-1, 1) + self._time_d[r, actions.squeeze()]
             nothing_to_visit = (self._mask_visited*self._mask_tw)[:, :self._n].sum(axis=1) == 0
             if (self._mask_visited*self._mask_tw)[:, :self._n].sum() > 0 and (nothing_to_visit).any():
                 self._mask_tw[r[nothing_to_visit], self._cur_route[nothing_to_visit, 0]] = 1

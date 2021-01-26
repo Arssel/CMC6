@@ -27,7 +27,7 @@ def graph_generation(n=20, bsz=16, graph_type=None):
         dots[dots < 0] = 0
     elif graph_type['distribution'] == 'centroids':
         if graph_type['num_cent'] == 'poisson':
-            if graph_type['lambda'] ==  'deafult':
+            if graph_type['lambda'] ==  'default':
                 l = 1.5
             else:
                 l = graph_type['lambda']
@@ -231,16 +231,33 @@ def check_repeating_vertexes(vertexes):
     mask = torch.cat((torch.ones((bsz, 1), dtype=bool), mask), dim=1)
     return mask
 
-def check_missing_vertexes(vertexes, flags, opts):
+def check_missing_vertexes(vertexes, flags, opts, n):
     penalties = []
+    size = n
     for b in vertexes:
-        if flags['multi_depot']:
-            n = b.shape[0] - opts['multi_depot']['depot_num']
-        elif (flags['demand'] and not flags['p_and_d']):
-            n = b.shape[0] - 1
-        else:
-            n = b.shape[0]
-        left = set(np.arange(n)) - set(b[:n])
+        left = set(np.arange(size)) - set(b.numpy())
         penalties.append(len(left))
     return np.array(penalties)
+
+
+def path_distance_jampr(matrix, plan):
+    batch_size = matrix.shape[0]
+    plan_flat = plan.view(batch_size, -1)
+    N = plan_flat.shape[1]
+    num_nodes = matrix.shape[1]
+    matrix = matrix.reshape(-1, num_nodes**2)
+    batch_range = np.arange(batch_size)
+    distance = matrix[batch_range, plan_flat[:, 0]]
+    for i in range(1, N):
+        distance += matrix[(batch_range, plan_flat[:, i-1]*num_nodes + plan_flat[:,i])]
+    return distance
+
+def check_missing_vertexes_jampr(plan, n):
+    bsz = plan.shape[0]
+    plan_flat = plan.view(bsz, -1)
+    penalties = []
+    for p in plan_flat:
+        left = set(np.arange(n+1)) - set(p.numpy()) - {0}
+        penalties.append(len(left))
+    return torch.Tensor(penalties)
         
