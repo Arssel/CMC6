@@ -257,6 +257,7 @@ def check_missing_vertexes_jampr(plan, n):
     plan_flat = plan.view(bsz, -1)
     penalties = []
     for p in plan_flat:
+        #print(p)
         left = set(np.arange(n+1)) - set(p.numpy()) - {0}
         penalties.append(len(left))
     return torch.Tensor(penalties)

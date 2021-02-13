@@ -47,7 +47,7 @@ class EncoderLayer(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, dm=128, num_heads=8, ff_dim=512, N=3):
         super().__init__()
-        self.projection = nn.Linear(5, dm)
+        self.projection = nn.Linear(7, dm)
         self.encoder_layers = nn.ModuleList([EncoderLayer(dm=dm, num_heads=num_heads, ff_dim=ff_dim) for _ in range(N)])
 
     def forward(self, node):
@@ -153,46 +153,45 @@ class AttentionModel(nn.Module):
         return (K)
 
     def forward(self, features, mask, t, sample=True):
-        with torch.autograd.set_detect_anomaly(True):
-            tour_plan = features[1]
-            L = tour_plan.shape[2]
-            K = tour_plan.shape[1]
-            bsz = tour_plan.shape[0]
-            vehicle_features = features[2]
-            act = features[3]
-            k = features[4]
-            last = features[5]
-            r = torch.arange(bsz, dtype=torch.int64)
-            n = features[0].shape[1]
-            if t == 0:
-                node = features[0]
-                h, h_g = self.encoder(node)
-                self.precomputed = self.precompute(h)
-                self.h, self.h_g = h, h_g
-                vehicle_emb = self.veh_emb(vehicle_features)
-                self.vehicle = self.veh_3(torch.sigmoid(self.veh_2(torch.sigmoid(self.veh_1(vehicle_emb)))))
-                node_emb = self.tour_2(torch.sigmoid(self.tour_1(self.h[:, 0, :])))
-                node_emb = node_emb[:, None, :]
-                node_emb = torch.repeat_interleave(node_emb, K, dim=1)/L
-                self.vehicle = torch.cat((self.vehicle, node_emb), dim=2)
-            else:
-                vehicle_emb = vehicle_features[r, k, :].clone()
-                vehicle_emb = self.veh_emb(vehicle_emb)
-                vehicle_k = self.veh_3(torch.sigmoid(self.veh_2(torch.sigmoid(self.veh_1(vehicle_emb)))))
-                plan_ind = tour_plan[r, k, :]
-                plan_ind_mask = (plan_ind != 0)
-                plan_ind_mask = plan_ind_mask[:, :, None]
-                nodes_ind = torch.repeat_interleave(plan_ind[:, :, None], self.en_dm, dim=2)
-                nodes = self.h.gather(index=nodes_ind, dim=1)
-                nodes = self.tour_2(torch.sigmoid(self.tour_1(nodes)))
-                vehicle_k = torch.cat((vehicle_k, (nodes * plan_ind_mask.type(dtype=torch.float)).sum(dim=1) / L), dim=1)
-                v = self.vehicle.clone()
-                v[np.arange(bsz), k, :] = vehicle_k
-                self.vehicle = v
-            fleet = self.vehicle.mean(dim=1)
-            act = torch.repeat_interleave(act[:, :, None], self.en_dm, dim=2)
-            vehicle_act = self.vehicle.gather(index=act, dim=1)
-            act = vehicle_act.mean(dim=1)
-            last = self.h[r, last, :].view(bsz, -1)
-            tup = (self.h, self.h_g, vehicle_act, fleet, act, last, self.act_num)
-            return self.decoder(tup, mask, t, sample, self.precomputed)
+        tour_plan = features[1]
+        L = tour_plan.shape[2]
+        K = tour_plan.shape[1]
+        bsz = tour_plan.shape[0]
+        vehicle_features = features[2]
+        act = features[3]
+        k = features[4]
+        last = features[5]
+        r = torch.arange(bsz, dtype=torch.int64)
+        n = features[0].shape[1]
+        if t == 0:
+            node = features[0]
+            h, h_g = self.encoder(node)
+            self.precomputed = self.precompute(h)
+            self.h, self.h_g = h, h_g
+            vehicle_emb = self.veh_emb(vehicle_features)
+            self.vehicle = self.veh_3(torch.sigmoid(self.veh_2(torch.sigmoid(self.veh_1(vehicle_emb)))))
+            node_emb = self.tour_2(torch.sigmoid(self.tour_1(self.h[:, 0, :])))
+            node_emb = node_emb[:, None, :]
+            node_emb = torch.repeat_interleave(node_emb, K, dim=1)/L
+            self.vehicle = torch.cat((self.vehicle, node_emb), dim=2)
+        else:
+            vehicle_emb = vehicle_features[r, k, :].clone()
+            vehicle_emb = self.veh_emb(vehicle_emb)
+            vehicle_k = self.veh_3(torch.sigmoid(self.veh_2(torch.sigmoid(self.veh_1(vehicle_emb)))))
+            plan_ind = tour_plan[r, k, :]
+            plan_ind_mask = (plan_ind != 0)
+            plan_ind_mask = plan_ind_mask[:, :, None]
+            nodes_ind = torch.repeat_interleave(plan_ind[:, :, None], self.en_dm, dim=2)
+            nodes = self.h.gather(index=nodes_ind, dim=1)
+            nodes = self.tour_2(torch.sigmoid(self.tour_1(nodes)))
+            vehicle_k = torch.cat((vehicle_k, (nodes * plan_ind_mask.type(dtype=torch.float)).sum(dim=1) / L), dim=1)
+            v = self.vehicle.clone()
+            v[np.arange(bsz), k, :] = vehicle_k
+            self.vehicle = v
+        fleet = self.vehicle.mean(dim=1)
+        act = torch.repeat_interleave(act[:, :, None], self.en_dm, dim=2)
+        vehicle_act = self.vehicle.gather(index=act, dim=1)
+        act = vehicle_act.mean(dim=1)
+        last = self.h[r, last, :].view(bsz, -1)
+        tup = (self.h, self.h_g, vehicle_act, fleet, act, last, self.act_num)
+        return self.decoder(tup, mask, t, sample, self.precomputed)

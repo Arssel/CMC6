@@ -11,11 +11,9 @@ from src.or_functions_jampr import compute_distance
 def compute_mean_metric(model, device="cuda", n=20, batch_size=250, T=40, sample=False):
     env = LogEnv(n=n, batch_size=batch_size)
     metric = np.zeros((T,))
-    time_array = np.zeros((T,))
     for i in tqdm(range(T)):
         
             features, distances, mask = env.reset()
-            start_time = time.time()
             features = list(map(lambda x: None if x is None else x.to(device), features))
             flag_done = False
             t = 0
@@ -26,14 +24,12 @@ def compute_mean_metric(model, device="cuda", n=20, batch_size=250, T=40, sample
                     features, mask, flag_done = env.step(v)
                     features = list(map(lambda x: None if x is None else x.to(device), features))
                 t += 1
-            end_time = time.time()
-            routes_length = path_distance_jampr(distances, env.tour_plan)
-            routes_length += check_missing_vertexes_jampr(env.tour_plan, n) * 100
-
-            time_array = end_time - start_time
+            routes_length = features[2][:, :, 4].sum(dim=1).to('cpu')
+            routes_length += check_missing_vertexes_jampr(env.tour_plan, n) * 1000
+            print(check_missing_vertexes_jampr(env.tour_plan, n) * 1000)
             metric[i] = routes_length.mean()
             
-    return metric.mean(), time_array.mean()
+    return metric.mean()
 
 def compute_mean_metric_with_or(model, device="cuda", n=20, batch_size=250, T=40, time_limit=0.5, sample=False, eps=1e-5):
     env = LogEnv(n=n, batch_size=batch_size)
@@ -52,19 +48,22 @@ def compute_mean_metric_with_or(model, device="cuda", n=20, batch_size=250, T=40
                 features, mask, flag_done = env.step(v)
                 features = list(map(lambda x: None if x is None else x.to(device), features))
             t += 1
-        print(features[2][:, :, 4].sum(dim=1).mean())
-        routes_length = path_distance_jampr(distances, env.tour_plan)
-        routes_length += check_missing_vertexes_jampr(env.tour_plan, n) * 100
-
+        routes_length = features[2][:, :, 4].sum(dim=1).to('cpu')
+        routes_length += check_missing_vertexes_jampr(env.tour_plan, n) * 1000
+        print(check_missing_vertexes_jampr(env.tour_plan, n) * 1000)
         metric_model[i] = routes_length.mean()
-        
+        print(env.tour_plan)
         for j in range(batch_size):
             data = {}
             data['time_matrix'] = env.distance.numpy()[j].squeeze()
             data['num_vehicles'] = 10
             data['time_windows'] = env.tw.numpy()[j].squeeze()
-            data['demands'] = env.demand.numpy()[j].squeeze()*100
-            data['vehicle_capacities'] = [500]*data['num_vehicles']
+            data['demands'] = env.demand.numpy()[j].squeeze()*env.capacity
+            data['vehicle_capacities'] = [env.capacity]*data['num_vehicles']
+            data['pickups_deliveries'] = env.pairs
+            print(data['time_windows'])
+            print(env.pairs)
+            print(env.tour_plan[j])
             metric_or[i, j] = compute_distance(data, eps=eps, time_limit=time_limit)
             print(metric_or[i, j])
             

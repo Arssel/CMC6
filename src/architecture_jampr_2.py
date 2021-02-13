@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-
+import time
 import numpy as np
 
 
@@ -47,7 +47,7 @@ class EncoderLayer(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, dm=128, num_heads=8, ff_dim=512, N=3):
         super().__init__()
-        self.projection = nn.Linear(5, dm)
+        self.projection = nn.Linear(9, dm)
         self.encoder_layers = nn.ModuleList([EncoderLayer(dm=dm, num_heads=num_heads, ff_dim=ff_dim) for _ in range(N)])
 
     def forward(self, node):
@@ -97,7 +97,7 @@ class Decoder(nn.Module):
         w_t_m = (mask == 0)
         u[w_t_m] = self.infty.to(h.device)
         u = torch.softmax(u, dim=1)
-
+        #print(u)
         if sample:
             vertexes = u.multinomial(1)
         else:
@@ -120,19 +120,19 @@ class AttentionModel(nn.Module):
         self.num_head = num_heads
         self.encoder = Encoder(dm=en_dm, num_heads=num_heads, ff_dim=ff_dim, N=N)
         self.decoder = Decoder(en_dm=en_dm, dec_dm=dec_dm, num_heads=num_heads)
-        self.veh_emb = nn.Linear(5, en_dm)
+        self.veh_emb = nn.Linear(5, veh_dim)
         self.veh_dim = veh_dim
-        self.veh_1 = nn.Linear(en_dm, veh_dim)
+        self.veh_1 = nn.Linear(veh_dim, veh_dim)
         self.veh_2 = nn.Linear(veh_dim, veh_dim)
         self.veh_3 = nn.Linear(veh_dim, veh_dim)
         self.tour_1 = nn.Linear(en_dm, veh_dim)
         self.tour_2 = nn.Linear(veh_dim, veh_dim)
-        self.lin_veh = nn.Linear(en_dm, dec_dm)
-        self.lin_nodes_veh = nn.Linear(en_dm + 1, dec_dm)
-        self.lin_prec = nn.Linear(en_dm, dec_dm)
-        self.lin_k = nn.Linear(dec_dm, dec_dm)
-        self.lin_v = nn.Linear(dec_dm, dec_dm)
-        self.lin_lg = nn.Linear(dec_dm, dec_dm)
+        self.lin_veh = nn.Linear(en_dm, en_dm)
+        self.lin_nodes_veh = nn.Linear(en_dm + 1, en_dm)
+        self.lin_prec = nn.Linear(en_dm, en_dm)
+        self.lin_k = nn.Linear(en_dm, dec_dm)
+        self.lin_v = nn.Linear(en_dm, dec_dm)
+        self.lin_lg = nn.Linear(en_dm, dec_dm)
         self.relu = nn.ReLU()
 
     def precompute(self, h):
@@ -141,81 +141,78 @@ class AttentionModel(nn.Module):
         return K
 
     def forward(self, features, mask, t, sample=True):
-        with torch.autograd.set_detect_anomaly(True):
-            tour_plan = features[1]
-            L = tour_plan.shape[2]
-            K_shape = tour_plan.shape[1]
-            bsz = tour_plan.shape[0]
-            vehicle_features = features[2]
-            act = features[3]
-            k = features[4]
-            last = features[5]
-            r = torch.arange(bsz, dtype=torch.int64)
-            n = features[0].shape[1]
-
-            if t == 0:
-                node = features[0]
-                h, h_g = self.encoder(node)
-                self.precomputed = self.precompute(h)
-                self.h, self.h_g = h, h_g
-                vehicle_emb = self.veh_emb(vehicle_features)
-                self.vehicle = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
-                node_emb = self.tour_2(self.relu(self.tour_1(self.h[:, 0, :])))
-                node_emb = node_emb[:, None, :].expand(bsz, K_shape, self.veh_dim)
-                self.vehicle = torch.cat((self.vehicle, node_emb/L), dim=2)
-                self.vehicle_proj = self.lin_veh(self.vehicle)
-                mm = torch.matmul(self.vehicle, h.permute(0, 2, 1)).unsqueeze(-1)
-                pwm = (self.vehicle[:, :, :, None] * (h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
-                g_a = self.lin_nodes_veh(torch.cat((mm, pwm), dim=3))
-                g_a = g_a + self.precomputed[:, None, :, :] + self.vehicle_proj[:, :, None, :]
-                self.g_a = g_a
-                K = self.lin_k(g_a)
-                V = self.lin_v(g_a)
-                K_lg = self.lin_lg(g_a)
-                self.K, self.V, self.K_lg = K, V, K_lg
-                self.mm, self.pwm = mm, pwm
-            else:
-                vehicle_emb = vehicle_features[r, k, :].clone()
-                vehicle_emb = self.veh_emb(vehicle_emb)
-                vehicle_k = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
-                plan_ind = tour_plan[r, k, :]
-                plan_ind_mask = (plan_ind != 0)
-                plan_ind_mask = plan_ind_mask[:, :, None]
-                nodes_ind = plan_ind[:, :, None].expand(bsz, n, self.en_dm)
-                nodes = self.h.gather(index=nodes_ind, dim=1)
-                nodes = self.tour_2(self.relu(self.tour_1(nodes)))
-                vehicle_k = torch.cat((vehicle_k, (nodes * plan_ind_mask.type(dtype=torch.float)).sum(dim=1) /
-                                        L), dim=1)
-                                       #plan_ind_mask.type(dtype=torch.float)[:, :, 0].sum(dim=1)), dim=1)
-                v = self.vehicle.clone()
-                v[r, k, :] = vehicle_k
-                self.vehicle = v
-                vehicle_proj_k = self.lin_veh(vehicle_k)
-                vehicle_k = vehicle_k.reshape(bsz, 1, -1)
-                mm_k = torch.matmul(vehicle_k, self.h.permute(0, 2, 1)).unsqueeze(-1)
-                pwm_k = (vehicle_k[:, :, :, None] * (self.h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
-                g_a_k = self.lin_nodes_veh(torch.cat((mm_k, pwm_k), dim=3))
-                g_a_k = g_a_k + self.precomputed[:, None, :, :] + vehicle_proj_k[:, None, None, :]
-                g_a_k = g_a_k.reshape(bsz, n, -1)
-                g_a = self.g_a.clone()
-                g_a[r, k, :, :] = g_a_k
-                self.g_a = g_a
-                K_k = self.lin_k(g_a_k)
-                V_k = self.lin_v(g_a_k)
-                K_lg_k = self.lin_lg(g_a_k)
-                K, V, K_lg = self.K.clone(), self.V.clone(), self.K_lg.clone()
-                K[r, k, :, :], V[r, k, :, :], K_lg[r, k, :, :] = K_k, V_k, K_lg_k
-                self.K, self.V, self.K_lg = K, V, K_lg
-            #print(self.vehicle)
-            fleet = self.vehicle.mean(dim=1)
-            act_v = act[:, :, None].expand(bsz, self.act_num, self.en_dm)
-            vehicle_act = self.vehicle.gather(index=act_v, dim=1)
-            act = act[:, :, None, None].expand(bsz, self.act_num, n, self.dec_dim)
-            K = self.K.gather(index=act, dim=1)
-            V = self.V.gather(index=act, dim=1)
-            K_lg = self.K_lg.gather(index=act, dim=1)
-            act = vehicle_act.mean(dim=1)
-            last = self.h[r, last, :].view(bsz, -1)
-            tup = (self.h, self.h_g, vehicle_act, fleet, act, last, self.act_num)
-            prec = (K, V, K_lg)
-            return self.decoder(tup, prec, mask, t, sample, self.precomputed)
+        tour_plan = features[1]
+        L = tour_plan.shape[2]
+        K_shape = tour_plan.shape[1]
+        bsz = tour_plan.shape[0]
+        vehicle_features = features[2]
+        act = features[3]
+        k = features[4]
+        last = features[5]
+        r = torch.arange(bsz, dtype=torch.int64)
+        n = features[0].shape[1]
+        if t == 0:
+            node = features[0]
+            h, h_g = self.encoder(node)
+            self.precomputed = self.precompute(h)
+            self.h, self.h_g = h, h_g
+            vehicle_emb = self.veh_emb(vehicle_features)
+            self.vehicle = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
+            node_emb = self.tour_2(self.relu(self.tour_1(self.h[:, 0, :])))
+            node_emb = node_emb[:, None, :].expand(bsz, K_shape, self.veh_dim)
+            self.vehicle = torch.cat((self.vehicle, node_emb/L), dim=2)
+            self.vehicle_proj = self.lin_veh(self.vehicle)
+            mm = torch.matmul(self.vehicle, h.permute(0, 2, 1)).unsqueeze(-1)
+            pwm = (self.vehicle[:, :, :, None] * (h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
+            g_a = self.lin_nodes_veh(torch.cat((mm, pwm), dim=3))
+            g_a = g_a + self.precomputed[:, None, :, :] + self.vehicle_proj[:, :, None, :]
+            self.g_a = g_a
+            K = self.lin_k(g_a)
+            V = self.lin_v(g_a)
+            K_lg = self.lin_lg(g_a)
+            self.K, self.V, self.K_lg = K, V, K_lg
+            self.mm, self.pwm = mm, pwm
+        else:
+            vehicle_emb = vehicle_features[r, k, :].clone()
+            vehicle_emb = self.veh_emb(vehicle_emb)
+            vehicle_k = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
+            plan_ind = tour_plan[r, k, :]
+            plan_ind_mask = (plan_ind != 0)
+            plan_ind_mask = plan_ind_mask[:, :, None]
+            nodes_ind = plan_ind[:, :, None].expand(bsz, n, self.en_dm)
+            nodes = self.h.gather(index=nodes_ind, dim=1)
+            nodes = self.tour_2(self.relu(self.tour_1(nodes)))
+            vehicle_k = torch.cat((vehicle_k, (nodes * plan_ind_mask.type(dtype=torch.float)).sum(dim=1) /
+                                    L), dim=1)
+            v = self.vehicle.clone()
+            v[r, k, :] = vehicle_k
+            self.vehicle = v
+            vehicle_proj_k = self.lin_veh(vehicle_k)
+            vehicle_k = vehicle_k.reshape(bsz, 1, -1)
+            mm_k = torch.matmul(vehicle_k, self.h.permute(0, 2, 1)).unsqueeze(-1)
+            pwm_k = (vehicle_k[:, :, :, None] * (self.h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
+            g_a_k = self.lin_nodes_veh(torch.cat((mm_k, pwm_k), dim=3))
+            g_a_k = g_a_k + self.precomputed[:, None, :, :] + vehicle_proj_k[:, None, None, :]
+            g_a_k = g_a_k.reshape(bsz, n, -1)
+            g_a = self.g_a.clone()
+            g_a[r, k, :, :] = g_a_k
+            self.g_a = g_a
+            K_k = self.lin_k(g_a_k)
+            V_k = self.lin_v(g_a_k)
+            K_lg_k = self.lin_lg(g_a_k)
+            K, V, K_lg = self.K.clone(), self.V.clone(), self.K_lg.clone()
+            K[r, k, :, :], V[r, k, :, :], K_lg[r, k, :, :] = K_k, V_k, K_lg_k
+            self.K, self.V, self.K_lg = K, V, K_lg
+        fleet = self.vehicle.mean(dim=1)
+        act_v = act[:, :, None].expand(bsz, self.act_num, self.en_dm)
+        vehicle_act = self.vehicle.gather(index=act_v, dim=1)
+        act = act[:, :, None, None].expand(bsz, self.act_num, n, self.dec_dim)
+        K = self.K.gather(index=act, dim=1)
+        V = self.V.gather(index=act, dim=1)
+        K_lg = self.K_lg.gather(index=act, dim=1)
+        act = vehicle_act.mean(dim=1)
+        last = self.h[r, last, :].view(bsz, -1)
+        tup = (self.h, self.h_g, vehicle_act, fleet, act, last, self.act_num)
+        prec = (K, V, K_lg)
+        v, p = self.decoder(tup, prec, mask, t, sample, self.precomputed)
+        return v, p

@@ -7,22 +7,31 @@ def total_distance(data, manager, routing, solution):
     total_time = 0
     for vehicle_id in range(data['num_vehicles']):
         index = routing.Start(vehicle_id)
-        #plan_output = 'Route for vehicle {}:\n'.format(vehicle_id)
+        plan_output = 'Route for vehicle {}:\n'.format(vehicle_id)
         while not routing.IsEnd(index):
             time_var = time_dimension.CumulVar(index)
-            #plan_output += '{0} Time({1},{2}) -> '.format(
-            #    manager.IndexToNode(index), solution.Min(time_var),
-            #    solution.Max(time_var))
+            plan_output += '{0} Time({1},{2}) -> '.format(
+                manager.IndexToNode(index), solution.Min(time_var),
+                solution.Max(time_var))
             index = solution.Value(routing.NextVar(index))
         time_var = time_dimension.CumulVar(index)
-        #plan_output += '{0} Time({1},{2})\n'.format(manager.IndexToNode(index),
-        #                                            solution.Min(time_var),
-        #                                            solution.Max(time_var))
-        #plan_output += 'Time of the route: {}min\n'.format(
-        #    solution.Min(time_var))
-        #print(plan_output)
+        plan_output += '{0} Time({1},{2})\n'.format(manager.IndexToNode(index),
+                                                    solution.Min(time_var),
+                                                    solution.Max(time_var))
+        plan_output += 'Time of the route: {}min\n'.format(
+            solution.Min(time_var))
+        print(plan_output)
         total_time += solution.Min(time_var)
-    return total_time
+    penalty = 0
+    dropped_nodes = 'Dropped nodes:'
+    for node in range(routing.Size()):
+        if routing.IsStart(node) or routing.IsEnd(node):
+            continue
+        if solution.Value(routing.NextVar(node)) == node:
+            penalty += 100000
+            dropped_nodes += ' {}'.format(manager.IndexToNode(node))
+    print(dropped_nodes)
+    return total_time + penalty
 
 def compute_distance(data, eps=1e-5, time_limit=1):
 
@@ -45,7 +54,7 @@ def compute_distance(data, eps=1e-5, time_limit=1):
         transit_callback_index,
         30000000000,  # allow waiting time
         30000000000,  # maximum time per vehicle
-        False,  # Don't force start cumul to zero.
+        True,
         time)
     time_dimension = routing.GetDimensionOrDie(time)
     # Add time window constraints for each location except depot.
@@ -68,8 +77,6 @@ def compute_distance(data, eps=1e-5, time_limit=1):
             time_dimension.CumulVar(routing.End(i)))
     
     def demand_callback(from_index):
-        """Returns the demand of the node."""
-        # Convert from routing variable Index to demands NodeIndex.
         from_node = manager.IndexToNode(from_index)
         return int(data['demands'][from_node])
 
@@ -77,10 +84,28 @@ def compute_distance(data, eps=1e-5, time_limit=1):
         demand_callback)
     routing.AddDimensionWithVehicleCapacity(
         demand_callback_index,
-        0,  # null capacity slack
+        30000000,  # null capacity slack
         data['vehicle_capacities'],  # vehicle maximum capacities
         True,  # start cumul to zero
         'Capacity')
+
+    #print(data['pickups_deliveries'])
+    for request in data['pickups_deliveries']:
+        #print(request[0])
+        #print(request[1])
+        pickup_index = manager.NodeToIndex(request[0])
+        delivery_index = manager.NodeToIndex(request[1])
+        routing.AddPickupAndDelivery(pickup_index, delivery_index)
+        routing.solver().Add(
+            routing.VehicleVar(pickup_index) == routing.VehicleVar(
+                delivery_index))
+        routing.solver().Add(
+            time_dimension.CumulVar(pickup_index) <=
+            time_dimension.CumulVar(delivery_index))
+
+    penalty = int(1000/eps)
+    for node in range(1, len(data['time_matrix'])):
+        routing.AddDisjunction([manager.NodeToIndex(node)], penalty)
 
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
@@ -91,7 +116,7 @@ def compute_distance(data, eps=1e-5, time_limit=1):
     search_parameters.local_search_metaheuristic = (
         routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
     search_parameters.first_solution_strategy = (
-        routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
+        routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
     
     solution = routing.SolveWithParameters(search_parameters)
     

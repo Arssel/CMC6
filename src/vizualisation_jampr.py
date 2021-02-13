@@ -5,6 +5,30 @@ import torch
 
 from IPython.display import clear_output
 
+def env_plot(env):
+    features = env.features
+    pairs = env.pairs
+    nodes = features[0][:, :2].squeeze()
+    tw = features[0][:, 3:5].squeeze()
+    demand = features[0][:, 2].squeeze()
+    n = env.n
+    fig = plt.figure(figsize=(14, 8))
+    plt.xlim = (0, 1)
+    plt.ylim = (0, 1)
+    plt.grid()
+    plt.plot()
+    plt.title('demonstration')
+    plt.scatter(nodes[1:, 0], nodes[1:, 1], c='blue', marker='o', s=200)
+    plt.scatter(nodes[:1, 0], nodes[:1, 1], c='red', marker='o', s=200)
+    for i in range(1, n + 1):
+        plt.annotate('[' + "{:0.2f}".format(tw[i][0]) + ',' + "{:0.2f}".format(tw[i][1]) + ']',
+                     (nodes[i, 0] + 0.025, nodes[i, 1]))
+        plt.annotate(demand[i].numpy(), (nodes[i, 0] - 0.025, nodes[i, 1] + 0.03))
+    for i in range(n // 2):
+        l_1 = (nodes[pairs[i, 0], 0], nodes[pairs[i, 0], 1])
+        l_2 = (nodes[pairs[i, 1], 0], nodes[pairs[i, 1], 1])
+        plt.arrow(l_1[0], l_1[1], l_2[0] - l_1[0], l_2[1] - l_1[1], head_width=0.02, length_includes_head=True)
+
 def demonstration(env, model, device):
     features, distances, mask = env.reset(full_reset=False)
     features = list(map(lambda x: None if x is None else x.to(device), features))
