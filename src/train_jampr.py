@@ -7,9 +7,10 @@ import torch
 import torch.optim as optim
 import time
 import copy
+import GPUtil
 
 from tqdm import tqdm
-
+import gc
 
 #from torch.utils.tensorboard import SummaryWriter
 
@@ -20,7 +21,7 @@ def adjust_learning_rate(optimizer, epoch, lr, decay):
     return lr_new
 
 def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, problem_size=20, decay=0.001,
-          penalty_num_vertexes=1000, penalty_num_vehicles=250):
+          penalty_num_vertexes=2000, penalty_num_vehicles=0):
     env = LogEnv(n=problem_size, batch_size=batch_size, active_num=1)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #writer = SummaryWriter()
@@ -34,18 +35,29 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
     best_reward = 1e10
     best_weights = None
     for e in tqdm(range(epochs), leave=False):
-
+        GPUtil.showUtilization()
+        gc.collect()
+        #for obj in gc.get_objects():
+        #    try:
+        #        if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+        #            print(type(obj), obj.size())
+        #    except:
+        #        pass
         lr = adjust_learning_rate(optimizer, e, lr, decay)
 
         greedy_model.load_state_dict(model.state_dict())
-
+        GPUtil.showUtilization()
         for step in range(T):
             global_iteration += 1
             features, distances, mask = env.reset()
+            GPUtil.showUtilization()
             features = list(map(lambda x: None if x is None else x.to(device), features))
+            GPUtil.showUtilization()
             flag_done = False
             t = 0
+            GPUtil.showUtilization()
             log_prob_seq = []
+            GPUtil.showUtilization()
             while not flag_done:
                 v, p = model(features, mask, t,)
                 v = v.to('cpu')
@@ -53,13 +65,17 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
                 with torch.no_grad():
                     features, mask, flag_done = env.step(v)
                     features = list(map(lambda x: None if x is None else x.to(device), features))
+                    GPUtil.showUtilization()
                 t += 1
+            GPUtil.showUtilization()
             log_prob_tensor = torch.stack(log_prob_seq, 1).squeeze(1)
+            GPUtil.showUtilization()
             #routes_length = path_distance_jampr(distances, env.tour_plan)
             #print(features[2][:, :, 4])
             routes_length = features[2][:, :, 4].sum(dim=1).to('cpu')
             routes_length += check_missing_vertexes_jampr(env.tour_plan, problem_size) * penalty_num_vertexes
             routes_length += (env.tour_plan.sum(dim=2) > 0).type(dtype=torch.float).sum(dim=1)*float(penalty_num_vehicles)
+            GPUtil.showUtilization()
             mf = (features[2][:, :, 4].sum(dim=1).to('cpu') +
                    check_missing_vertexes_jampr(env.tour_plan, problem_size) * penalty_num_vertexes).mean()
             print((features[2][:, :, 4].sum(dim=1).to('cpu') +

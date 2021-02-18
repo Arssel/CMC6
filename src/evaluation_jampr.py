@@ -32,7 +32,7 @@ def compute_mean_metric(model, device="cuda", n=20, batch_size=250, T=40, sample
     return metric.mean()
 
 def compute_mean_metric_with_or(model, device="cuda", n=20, batch_size=250, T=40, time_limit=0.5, sample=False, eps=1e-5):
-    env = LogEnv(n=n, batch_size=batch_size)
+    env = LogEnv(n=n, batch_size=batch_size, active_num=1)
     metric_model = np.zeros((T,))
     metric_or = np.zeros((T, batch_size))
     for i in range(T):
@@ -52,7 +52,7 @@ def compute_mean_metric_with_or(model, device="cuda", n=20, batch_size=250, T=40
         routes_length += check_missing_vertexes_jampr(env.tour_plan, n) * 1000
         print(check_missing_vertexes_jampr(env.tour_plan, n) * 1000)
         metric_model[i] = routes_length.mean()
-        print(env.tour_plan)
+        #print(env.tour_plan)
         for j in range(batch_size):
             data = {}
             data['time_matrix'] = env.distance.numpy()[j].squeeze()
@@ -61,10 +61,10 @@ def compute_mean_metric_with_or(model, device="cuda", n=20, batch_size=250, T=40
             data['demands'] = env.demand.numpy()[j].squeeze()*env.capacity
             data['vehicle_capacities'] = [env.capacity]*data['num_vehicles']
             data['pickups_deliveries'] = env.pairs
-            print(data['time_windows'])
-            print(env.pairs)
-            print(env.tour_plan[j])
+            #print(data['time_windows'])
+            #print(env.pairs)
+            #print(env.tour_plan[j])
             metric_or[i, j] = compute_distance(data, eps=eps, time_limit=time_limit)
-            print(metric_or[i, j])
+            #print(metric_or[i, j])
             
     return metric_model.mean(), metric_or.mean()

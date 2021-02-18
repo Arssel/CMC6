@@ -48,7 +48,7 @@ def compute_distance(data, eps=1e-5, time_limit=1):
 
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-       
+
     time = 'Time'
     routing.AddDimension(
         transit_callback_index,
@@ -107,7 +107,6 @@ def compute_distance(data, eps=1e-5, time_limit=1):
     for node in range(1, len(data['time_matrix'])):
         routing.AddDisjunction([manager.NodeToIndex(node)], penalty)
 
-    routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
     if time_limit < 1:
         search_parameters.time_limit.FromMilliseconds(int(time_limit*1000))
