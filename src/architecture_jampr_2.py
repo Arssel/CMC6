@@ -3,9 +3,13 @@ import torch.nn as nn
 import time
 import numpy as np
 
+from pytorch_memlab import profile, profile_every
+
+from src.attention_modules import StandardAttention, NystromAttention, PerformerAttention, LinformerAttention
+
 
 class EncoderLayer(nn.Module):
-    def __init__(self, dm=128, num_heads=8, ff_dim=512):
+    def __init__(self, dm=128, num_heads=8, ff_dim=512, attention_type='standard', attention_parameters=None):
         super().__init__()
         self.hid_dim = dm
         self.num_head = num_heads
@@ -13,10 +17,26 @@ class EncoderLayer(nn.Module):
         self.lin_q = nn.Linear(dm, dm)
         self.lin_k = nn.Linear(dm, dm)
         self.lin_v = nn.Linear(dm, dm)
-        self.lin_o = nn.Linear(dm, dm)
+        if attention_type == 'standard':
+            self.attention = StandardAttention()
+        elif attention_type == 'nystrom':
+            if attention_parameters is None:
+                self.attention = NystromAttention(10, self.head_dim, self.num_head)
+            else:
+                self.attention = NystromAttention(attention_parameters['num_landmarks'], self.head_dim, self.num_head)
+        elif attention_type == 'linformer':
+            if attention_parameters is None:
+                self.attention = LinformerAttention(seq_len=50)
+            else:
+                self.attention = LinformerAttention(attention_parameters['seq_len'], dim=dm, heads=num_heads)
+        elif attention_type == 'performer':
+            self.attention = PerformerAttention(self.head_dim)
+        else:
+            assert 'error: no such attention'
         self.batch_norm_1 = nn.BatchNorm1d(dm)
         self.batch_norm_2 = nn.BatchNorm1d(dm)
         self.ff = nn.Sequential(nn.Linear(dm, ff_dim), nn.ReLU(), nn.Linear(ff_dim, dm))
+        self.lin_o = nn.Linear(dm, dm)
 
     def forward(self, x):
         bsz, gr_size, _ = x.shape
@@ -28,13 +48,7 @@ class EncoderLayer(nn.Module):
         Q = Q.view(bsz, -1, self.num_head, self.head_dim).permute(0, 2, 1, 3)
         V = V.view(bsz, -1, self.num_head, self.head_dim).permute(0, 2, 1, 3)
 
-        scale = torch.sqrt(torch.tensor(self.head_dim, dtype=float)).to(x.device)
-        QK_norm = torch.matmul(Q, K.permute(0, 1, 3, 2)) / scale
-        QK_sm = torch.softmax(QK_norm, dim=-1)
-
-        QKV = torch.matmul(QK_sm, V)
-        QKV = QKV.permute(0, 2, 1, 3).contiguous()
-        QKV = QKV.view(bsz, -1, self.hid_dim)
+        QKV = self.attention(Q, K, V)
         QKV_o = self.lin_o(QKV)
 
         x = QKV_o + x
@@ -44,11 +58,13 @@ class EncoderLayer(nn.Module):
         return x
 
 
+
 class Encoder(nn.Module):
-    def __init__(self, dm=128, num_heads=8, ff_dim=512, N=3):
+    def __init__(self, dm=128, num_heads=8, ff_dim=512, N=3, attention_type='standard', attention_parameters=None):
         super().__init__()
-        self.projection = nn.Linear(9, dm)
-        self.encoder_layers = nn.ModuleList([EncoderLayer(dm=dm, num_heads=num_heads, ff_dim=ff_dim) for _ in range(N)])
+        self.projection = nn.Linear(7, dm)
+        self.encoder_layers = nn.ModuleList([EncoderLayer(dm=dm, num_heads=num_heads, ff_dim=ff_dim,
+                    attention_type=attention_type, attention_parameters=attention_parameters) for _ in range(N)])
 
     def forward(self, node):
         node = self.projection(node)
@@ -111,14 +127,16 @@ class Decoder(nn.Module):
 
 
 class AttentionModel(nn.Module):
-    def __init__(self, en_dm=128, dec_dm=256, veh_dim=64, num_heads=8, ff_dim=512, N=3, active_num=3):
+    def __init__(self, en_dm=128, dec_dm=256, veh_dim=64, num_heads=8, ff_dim=512, N=3, active_num=3,
+                 attention_type='standard', attention_parameters=None):
         super().__init__()
         self.act_num = active_num
         self.en_dm = en_dm
         self.dec_dim = dec_dm
         self.head_dim = dec_dm // num_heads
         self.num_head = num_heads
-        self.encoder = Encoder(dm=en_dm, num_heads=num_heads, ff_dim=ff_dim, N=N)
+        self.encoder = Encoder(dm=en_dm, num_heads=num_heads, ff_dim=ff_dim, N=N, attention_type=attention_type,
+                               attention_parameters=attention_parameters)
         self.decoder = Decoder(en_dm=en_dm, dec_dm=dec_dm, num_heads=num_heads)
         self.veh_emb = nn.Linear(5, veh_dim)
         self.veh_dim = veh_dim
@@ -140,6 +158,7 @@ class AttentionModel(nn.Module):
         K = self.lin_prec(h)
         return K
 
+    @profile
     def forward(self, features, mask, t, sample=True):
         tour_plan = features[1]
         L = tour_plan.shape[2]
@@ -153,17 +172,19 @@ class AttentionModel(nn.Module):
         n = features[0].shape[1]
         if t == 0:
             node = features[0]
-            h, h_g = self.encoder(node)
-            self.precomputed = self.precompute(h)
-            self.h, self.h_g = h, h_g
+            self.h, self.h_g = self.encoder(node)
+            self.precomputed = self.precompute(self.h)
             vehicle_emb = self.veh_emb(vehicle_features)
+            del vehicle_features
             self.vehicle = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
+            del vehicle_emb
             node_emb = self.tour_2(self.relu(self.tour_1(self.h[:, 0, :])))
             node_emb = node_emb[:, None, :].expand(bsz, K_shape, self.veh_dim)
             self.vehicle = torch.cat((self.vehicle, node_emb/L), dim=2)
+            del node_emb
             self.vehicle_proj = self.lin_veh(self.vehicle)
-            mm = torch.matmul(self.vehicle, h.permute(0, 2, 1)).unsqueeze(-1)
-            pwm = (self.vehicle[:, :, :, None] * (h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
+            mm = torch.matmul(self.vehicle, self.h.permute(0, 2, 1)).unsqueeze(-1)
+            pwm = (self.vehicle[:, :, :, None] * (self.h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
             g_a = self.lin_nodes_veh(torch.cat((mm, pwm), dim=3))
             g_a = g_a + self.precomputed[:, None, :, :] + self.vehicle_proj[:, :, None, :]
             self.g_a = g_a
@@ -172,19 +193,24 @@ class AttentionModel(nn.Module):
             K_lg = self.lin_lg(g_a)
             self.K, self.V, self.K_lg = K, V, K_lg
             self.mm, self.pwm = mm, pwm
+            del g_a, mm, pwm
         else:
             vehicle_emb = vehicle_features[r, k, :].clone()
+            del vehicle_features
             vehicle_emb = self.veh_emb(vehicle_emb)
             vehicle_k = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
+            del vehicle_emb
             plan_ind = tour_plan[r, k, :]
             plan_ind_mask = (plan_ind != 0)
             plan_ind_mask = plan_ind_mask[:, :, None]
-            nodes_ind = plan_ind[:, :, None].expand(bsz, n, self.en_dm)
+            nodes_ind = plan_ind[:, :, None].expand(bsz, 20, self.en_dm)
             nodes = self.h.gather(index=nodes_ind, dim=1)
             nodes = self.tour_2(self.relu(self.tour_1(nodes)))
             vehicle_k = torch.cat((vehicle_k, (nodes * plan_ind_mask.type(dtype=torch.float)).sum(dim=1) /
                                     L), dim=1)
+            del plan_ind_mask, plan_ind
             v = self.vehicle.clone()
+            del self.vehicle
             v[r, k, :] = vehicle_k
             self.vehicle = v
             vehicle_proj_k = self.lin_veh(vehicle_k)
@@ -195,12 +221,18 @@ class AttentionModel(nn.Module):
             g_a_k = g_a_k + self.precomputed[:, None, :, :] + vehicle_proj_k[:, None, None, :]
             g_a_k = g_a_k.reshape(bsz, n, -1)
             g_a = self.g_a.clone()
+            del self.g_a
             g_a[r, k, :, :] = g_a_k
             self.g_a = g_a
             K_k = self.lin_k(g_a_k)
             V_k = self.lin_v(g_a_k)
             K_lg_k = self.lin_lg(g_a_k)
-            K, V, K_lg = self.K.clone(), self.V.clone(), self.K_lg.clone()
+            K = self.K.clone()
+            del self.K
+            V = self.V.clone()
+            del self.V
+            K_lg = self.K_lg.clone()
+            del self.K_lg
             K[r, k, :, :], V[r, k, :, :], K_lg[r, k, :, :] = K_k, V_k, K_lg_k
             self.K, self.V, self.K_lg = K, V, K_lg
         fleet = self.vehicle.mean(dim=1)

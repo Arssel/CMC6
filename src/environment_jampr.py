@@ -74,11 +74,11 @@ class LogEnv:
             self.pd_tw = pd_tw
             self.pd_locations = pd_locations
             self.demand[:, pairs[:, 0]] = self.demand[:, pairs[:, 1]]*(-1)
-            features = torch.cat((location, demand, tw, pd_locations, pd_tw), dim=2)
+            features = torch.cat((location, demand, tw, pd_locations), dim=2)
             self.pairs = pairs
             self.features = features
         self.time_step = 0
-        self.tour_plan = torch.zeros((self.bsz, self.k, self.n + 1), dtype=torch.int64)
+        self.tour_plan = torch.zeros((self.bsz, self.k, 20), dtype=torch.int64)
         self.act_vind = torch.zeros((self.bsz, self.act_num, self.n + 1), dtype=torch.int64)
         self.acted_v = torch.zeros((self.bsz, self.k), dtype=torch.int64)
         for i in range(self.act_num):
@@ -91,7 +91,7 @@ class LogEnv:
         self.last_location = torch.zeros((self.bsz), dtype=torch.int64)
         act = self.act_vind[:, :, 0]
         last = torch.zeros((self.bsz), dtype=torch.int64)
-        features_return = (self.features, self.tour_plan, self.vehicle, act, torch.zeros((1)), last)
+        features_return = [self.features, self.tour_plan, self.vehicle, act, torch.zeros((1)), last]
         return features_return, self.distance.clone(), mask.reshape(-1, self.act_num*(self.n +1))
 
     def init_vehicle(self):
@@ -120,12 +120,8 @@ class LogEnv:
         d_t = self.vehicle[r, k, -1] + self.distance[r, self.last_location, i]
         d_f = (d_t <= self.tw[r, i, 0])
         self.last_location = i
-        #print(self.vehicle[r, k, -1])
         self.vehicle[r, k, -1] = d_f.type(dtype=torch.float)*self.tw[r, i, 0] + (~d_f).type(dtype=torch.float)*d_t
-        #print(self.vehicle[r, k, -1])
-        #print(self.fillness[r, k])
         self.fillness[r, k] -= self.demand[r, i, 0]
-        #print(self.fillness[r, k])
         if self.bsz > 1:
             pd_start_mask = i.reshape(-1, 1) == self.pairs[:, 0].reshape(1, -1)
             pd_i = pd_start_mask.type(dtype=torch.float).argmax(axis=1)
@@ -147,25 +143,16 @@ class LogEnv:
             self.mask_visited[r_ind, k[r_ind], 1:] = 0
         self.mask_tw[r, k, :] = (self.vehicle[r, k, -1].reshape(-1, 1) + self.distance[r, i, :]) <= self.tw[:, :, 1]
         future_weight = self.fillness[r, k].reshape(-1, 1) - self.demand[r, :, 0]
-        #print(future_weight)
         self.mask_demand[r, k, :] = (-1e-5 <= future_weight.type(dtype=torch.float)) & (future_weight.type(dtype=torch.float) <= 1 + 1e+5)
         mask = (self.mask_pd*self.mask_demand * self.mask_tw * self.mask_visited).gather(index=self.act_vind, dim=1)
         if (mask.sum(dim=2).sum(dim=1).squeeze() == 0).any():
             r_ind = r[mask.sum(dim=2).sum(dim=1).squeeze() == 0]
             self.mask_visited[r_ind, :, 0] = 1
         total_mask = (self.mask_pd*self.mask_demand*self.mask_tw*self.mask_visited)
-        #print(total_mask[r, k, :])
-        #print(total_mask[r, k, :].shape)
-        #print(self.mask_pd[:, k])
-        #(self.mask_tw[:, k])
-        #print(self.mask_demand[:, k])
         if (total_mask[r, k, 1:].sum(dim=1) == 0).any():
             batch_to_change_mask = total_mask[r, k, 1:].sum(dim=1) == 0
-            #print(self.vehicle[batch_to_change_mask, k[batch_to_change_mask], -1])
             self.vehicle[batch_to_change_mask, k[batch_to_change_mask], -1] \
                 += self.distance[batch_to_change_mask, i[batch_to_change_mask], 0]
-            #print(self.distance[batch_to_change_mask, i[batch_to_change_mask], 0])
-            #print(self.vehicle[batch_to_change_mask, k[batch_to_change_mask], -1])
             batch_to_change = r[batch_to_change_mask]
             last_vehicle = self.acted_v.argmin(dim=1)
             last_not_null = last_vehicle != 0
@@ -181,9 +168,5 @@ class LogEnv:
         total_mask = (self.mask_pd*self.mask_demand * self.mask_tw * self.mask_visited).gather(index=self.act_vind, dim=1)
         act = self.act_vind[:, :, 0]
         last = i
-        features = (self.features, self.tour_plan, self.vehicle, act, k, last)
-        return features, total_mask.reshape(-1, self.act_num*(self.n +1)), flag_done#, \
-               #(self.mask_pd.gather(index=self.act_vind, dim=1),
-               # self.mask_demand.gather(index=self.act_vind, dim=1),
-               # self.mask_tw.gather(index=self.act_vind, dim=1),
-               # self.mask_visited.gather(index=self.act_vind, dim=1))
+        features = [self.features, self.tour_plan, self.vehicle, act, k, last]
+        return features, total_mask.reshape(-1, self.act_num*(self.n +1)), flag_done
