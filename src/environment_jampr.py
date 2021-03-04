@@ -11,12 +11,13 @@ def pairwise_distance(X, p):
 
 
 class LogEnv:
-    def __init__(self, n=20, batch_size=16, K=10, active_num=3):
+    def __init__(self, n=20, batch_size=16, K=10, active_num=3, max_tour_len=20):
         super().__init__()
         self.n = n
         self.bsz = batch_size
         self.k = K
         self.act_num = active_num
+        self.mtl = max_tour_len
 
     def reset(self, full_reset=True):
         if full_reset:
@@ -78,7 +79,7 @@ class LogEnv:
             self.pairs = pairs
             self.features = features
         self.time_step = 0
-        self.tour_plan = torch.zeros((self.bsz, self.k, 20), dtype=torch.int64)
+        self.tour_plan = torch.zeros((self.bsz, self.k, self.mtl), dtype=torch.int64)
         self.act_vind = torch.zeros((self.bsz, self.act_num, self.n + 1), dtype=torch.int64)
         self.acted_v = torch.zeros((self.bsz, self.k), dtype=torch.int64)
         for i in range(self.act_num):
@@ -91,7 +92,9 @@ class LogEnv:
         self.last_location = torch.zeros((self.bsz), dtype=torch.int64)
         act = self.act_vind[:, :, 0]
         last = torch.zeros((self.bsz), dtype=torch.int64)
-        features_return = [self.features, self.tour_plan, self.vehicle, act, torch.zeros((1)), last]
+        features_return = [self.features, self.tour_plan.gather(1, act[:, :, None].expand(act.shape[0], act.shape[1], self.mtl)),
+                           self.vehicle.gather(1, act[:, :, None].expand(act.shape[0], act.shape[1], 5)),
+                           act, torch.zeros((1)), last]
         return features_return, self.distance.clone(), mask.reshape(-1, self.act_num*(self.n +1))
 
     def init_vehicle(self):
@@ -168,5 +171,7 @@ class LogEnv:
         total_mask = (self.mask_pd*self.mask_demand * self.mask_tw * self.mask_visited).gather(index=self.act_vind, dim=1)
         act = self.act_vind[:, :, 0]
         last = i
-        features = [self.features, self.tour_plan, self.vehicle, act, k, last]
+        features = [torch.zeros((1)),
+                    self.tour_plan.gather(1, act[:, :, None].expand(act.shape[0], act.shape[1], self.mtl)),
+                                          self.vehicle.gather(1, act[:, :, None].expand(act.shape[0], act.shape[1], 5)), last]
         return features, total_mask.reshape(-1, self.act_num*(self.n +1)), flag_done

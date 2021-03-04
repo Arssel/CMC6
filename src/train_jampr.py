@@ -22,14 +22,10 @@ def adjust_learning_rate(optimizer, epoch, lr, decay):
     return lr_new
 
 def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, problem_size=20, decay=0.001,
-          penalty_num_vertexes=2000, penalty_num_vehicles=0, baseline='MA', num_vehicles=10):
+          penalty_num_vertexes=2000, penalty_num_vehicles=0, num_vehicles=10):
     env = LogEnv(n=problem_size, batch_size=batch_size, active_num=1, K=num_vehicles)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #writer = SummaryWriter()
-
-    if baseline != 'MA':
-        with torch.no_grad():
-            greedy_model = AttentionModel(active_num=1).to(device)
 
     global_iteration = 0
     loss_list = []
@@ -39,11 +35,7 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
     for e in tqdm(range(epochs), leave=False):
         lr = adjust_learning_rate(optimizer, e, lr, decay)
 
-        if baseline != 'MA':
-            greedy_model.load_state_dict(model.state_dict())
         for step in range(T):
-            gc.collect()
-            torch.cuda.empty_cache()
             global_iteration += 1
             features, distances, mask = env.reset()
             features[0] = features[0].to(device)
@@ -53,16 +45,16 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
             flag_done = False
             t = 0
             log_prob_seq = []
+            precomputed = None
             while not flag_done:
-                v, p = model(features, mask, t,)
+                v, p, precomputed = model(features, mask, t, precomputed)
                 v = v.to('cpu')
                 log_prob_seq.append(torch.log(p))
-                with torch.no_grad():
-                    features, mask, flag_done = env.step(v)
-                    features[0] = features[0].to(device)
-                    features[1] = features[1].to(device)
-                    features[2] = features[2].to(device)
-                    features[3] = features[3].to(device)
+                features, mask, flag_done = env.step(v)
+                features[0] = features[0].to(device)
+                features[1] = features[1].to(device)
+                features[2] = features[2].to(device)
+                features[3] = features[3].to(device)
                 t += 1
             log_prob_tensor = torch.stack(log_prob_seq, 1).squeeze(1)
             routes_length = features[2][:, :, 4].sum(dim=1).to('cpu')
@@ -73,31 +65,14 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
             print((features[2][:, :, 4].sum(dim=1).to('cpu') +
                    check_missing_vertexes_jampr(env.tour_plan, problem_size) * penalty_num_vertexes).mean())
 
-            if baseline != 'MA' and e > 1:
-                features, distances, mask = env.reset(full_reset=False)
-                features = list(map(lambda x: None if x is None else x.to(device), features))
-                flag_done = False
-                t = 0
-                while not flag_done:
-                    v, _ = greedy_model(features, mask, t, sample=False)
-                    v = v.to('cpu')
-                    with torch.no_grad():
-                        features, mask, flag_done = env.step(v)
-                        features = list(map(lambda x: None if x is None else x.to(device), features))
-                    t += 1
-                greedy_routes_length = features[2][:, :, 4].sum(dim=1).to('cpu')
-                greedy_routes_length += check_missing_vertexes_jampr(env.tour_plan, problem_size) * penalty_num_vertexes
-                greedy_routes_length += (env.tour_plan.sum(dim=2) > 0).type(dtype=torch.float).sum(dim=1) * float(penalty_num_vehicles)
-                with torch.no_grad():
-                    delta = torch.Tensor(routes_length - greedy_routes_length).to(device)
-            else:
-                with torch.no_grad():
-                    if global_iteration == 1:
-                        M = routes_length
-                    else:
-                        M = 0.9 * M + (1 - 0.9) * routes_length
-                    delta = routes_length - M
-                    delta = delta.to(device)
+
+            with torch.no_grad():
+                if global_iteration == 1:
+                    M = routes_length
+                else:
+                    M = 0.9 * M + (1 - 0.9) * routes_length
+                delta = routes_length - M
+                delta = delta.to(device)
 
             loss = (delta.squeeze() * log_prob_tensor.sum(dim=1).squeeze()).mean()
             loss_list.append(loss.detach().to('cpu').item())
