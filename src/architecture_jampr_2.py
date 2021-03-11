@@ -142,7 +142,7 @@ class AttentionModel(nn.Module):
         self.veh_dim = veh_dim
         self.veh_1 = nn.Linear(veh_dim, veh_dim)
         self.veh_2 = nn.Linear(veh_dim, veh_dim)
-        self.veh_3 = nn.Linear(veh_dim, veh_dim)
+        self.veh_3 = nn.Linear(veh_dim, en_dm)
         self.tour_1 = nn.Linear(en_dm, veh_dim)
         self.tour_2 = nn.Linear(veh_dim, veh_dim)
         self.lin_veh = nn.Linear(en_dm, en_dm)
@@ -159,12 +159,9 @@ class AttentionModel(nn.Module):
         return K
 
     def forward(self, features, mask, t, precomputed=None, sample=True):
-        tour_plan = features[1]
-        L = tour_plan.shape[2]
-        K_shape = tour_plan.shape[1]
-        bsz = tour_plan.shape[0]
-        vehicle_features = features[2]
-        last = features[3]
+        vehicle_features = features[1]
+        bsz = vehicle_features.shape[0]
+        last = features[2]
         r = torch.arange(bsz, dtype=torch.int64)
         if precomputed is None:
             node = features[0]
@@ -176,17 +173,10 @@ class AttentionModel(nn.Module):
             h, h_g, h_pr = precomputed
         vehicle_emb = self.veh_emb(vehicle_features)
         vehicle = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
-        tour_plan_mask = (tour_plan != 0)
-        tour_plan = tour_plan[:, :, :, None].expand(bsz, self.act_num, L, self.en_dm)
-        nodes = h[:, None, :, :].expand(bsz, self.act_num, self.n, self.en_dm).gather(index=tour_plan, dim=2)
-        nodes = self.tour_2(self.relu(self.tour_1(nodes)))
-        vehicle = torch.cat((vehicle, (nodes * tour_plan_mask[:, :, :, None].type(dtype=torch.float)).sum(dim=2) /
-                               L), dim=2)
-        vehicle_proj = self.lin_veh(vehicle)
         mm = torch.matmul(vehicle, h.permute(0, 2, 1)).unsqueeze(-1)
         pwm = (vehicle[:, :, :, None] * (h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
         g_a = self.lin_nodes_veh(torch.cat((mm, pwm), dim=3))
-        g_a = g_a + h_pr[:, None, :, :] + vehicle_proj[:, :, None, :]
+        g_a = g_a + h_pr[:, None, :, :] + vehicle[:, :, None, :]
         K = self.lin_k(g_a)
         V = self.lin_v(g_a)
         K_lg = self.lin_lg(g_a)

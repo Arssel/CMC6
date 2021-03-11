@@ -68,7 +68,8 @@ class LogEnv(gym.Env):
         self.last_location = torch.zeros((self.bsz), dtype=torch.int64)
         act = self.act_vind[:, :, 0]
         last = torch.zeros((self.bsz), dtype=torch.int64)
-        features_return = (self.features, self.tour_plan, self.vehicle, act, torch.zeros((1)), last)
+        features_return = [self.features,
+                           self.vehicle.gather(1, act[:, :, None].expand(act.shape[0], act.shape[1], 5)), last]
         return features_return, self.distance.clone(), mask.reshape(-1, self.act_num*(self.n +1))
 
     def init_vehicle(self):
@@ -103,11 +104,11 @@ class LogEnv(gym.Env):
             self.mask_visited[r_ind, k[r_ind], i[r_ind]] = 0
         if len(r_ind_other) != 0:
             self.mask_visited[r_ind_other, :, i[r_ind_other]] = 0
-        r_ind = r[i == 0]
         if len(r_ind) != 0:
             self.mask_visited[r_ind, k[r_ind], 1:] = 0
         self.mask_tw[r, k, :] = (self.vehicle[r, k, -1].reshape(-1, 1) + self.distance[r, i, :]) <= self.tw[:, :, 1]
-        self.mask_demand[r, k, :] = (self.fillness[r, k].reshape(-1, 1) + self.demand[r, i, :] ) <= 1
+        future_weight = self.fillness[r, k].reshape(-1, 1) + self.demand[r, :, 0]
+        self.mask_demand[r, k, :] = future_weight <= 1
         mask = (self.mask_demand * self.mask_tw * self.mask_visited).gather(index=self.act_vind, dim=1)
         if (mask.sum(dim=2).sum(dim=1).squeeze() == 0).any():
             r_ind = r[mask.sum(dim=2).sum(dim=1).squeeze() == 0]
@@ -130,5 +131,6 @@ class LogEnv(gym.Env):
         total_mask = (self.mask_demand * self.mask_tw * self.mask_visited).gather(index=self.act_vind, dim=1)
         act = self.act_vind[:, :, 0]
         last = i
-        features = (self.features, self.tour_plan, self.vehicle, act, k, last)
+        features = [torch.zeros((1)),
+                    self.vehicle.gather(1, act[:, :, None].expand(act.shape[0], act.shape[1], 5)), last]
         return features, total_mask.reshape(-1, self.act_num*(self.n +1)), flag_done
