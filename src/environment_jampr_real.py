@@ -20,37 +20,52 @@ class LogEnv(gym.Env):
         self.max_route_len = max_route_len
         self.max_window = max_window
 
-    def reset(self, full_reset=True):
+    def reset(self, full_reset=True, data=None):
         if full_reset:
-            location = torch.rand((self.bsz, self.n + 2, 2))
-            self.location = location
-            distance = pairwise_distance(location, 1)/(0.4)
-            distance[distance > 0] += 15
-            distance[:, :, -1] = 0
-            distance[:, -1, 0] = 0
-            self.distance = distance
-            demand = torch.as_tensor(np.random.choice(np.arange(1, 101), replace=True, size=(self.bsz, self.n + 2, 1)))
-            demand[:, 0, :] = 0
-            demand[:, -1, :] = 0
-            self.capacity = 700
-            demand = demand/self.capacity
-            self.demand = demand
-            h = (torch.ceil(distance[:, 1:, 0])+1)
-            a = torch.zeros((self.bsz, self.n + 2, 1))
-            b = torch.zeros((self.bsz, self.n + 2, 1))
-            for i in range(self.bsz):
-                for j in range(1, self.n + 1):
-                    a[i, j] = torch.rand((1,1))*(self.max_window - h[i,j-1]) + h[i,j-1]
-                    b[i, j] = a[i, j] + 120
-                    if b[i, j] > self.max_window:
-                        b[i,j] = self.max_window
-            a[:, 0] = 0
-            b[:, 0] = 150
-            b[:, -1] = self.max_window
-            tw = torch.cat((a,b), dim=2)
-            self.tw = tw
-            features = torch.cat((location, demand, tw/self.max_window), dim=2)
-            self.features = features
+            if data is None:
+                location = torch.rand((self.bsz, self.n + 2, 2))
+                self.location = location
+                distance = pairwise_distance(location, 1)/(0.4)
+                distance[distance > 0] += 15
+                distance[:, :, -1] = 0
+                distance[:, -1, :] = 0
+                #print(distance)
+                #(distance.mean())
+                self.distance = distance
+                demand = torch.as_tensor(np.random.choice(np.arange(1, 101), replace=True, size=(self.bsz, self.n + 2, 1)),
+                                         dtype=torch.float)
+                demand[:, 0, :] = 0
+                demand[:, -1, :] = 0
+                self.capacity = 700
+                demand = demand/self.capacity
+                self.demand = demand
+                h = (torch.ceil(distance[:, 1:, 0])+1)
+                a = torch.zeros((self.bsz, self.n + 2, 1))
+                b = torch.zeros((self.bsz, self.n + 2, 1))
+                for i in range(self.bsz):
+                    for j in range(1, self.n + 1):
+                        a[i, j] = torch.rand((1,1))*(self.max_window - h[i,j-1]) + h[i,j-1]
+                        b[i, j] = a[i, j] + 120
+                        if b[i, j] > self.max_window:
+                            b[i,j] = self.max_window
+                a[:, 0] = 0
+                b[:, 0] = 150
+                b[:, -1] = self.max_window
+                tw = torch.cat((a,b), dim=2)
+                self.tw = tw
+                features = torch.cat((location, demand, tw/self.max_window), dim=2)
+                self.features = features
+            else:
+                self.location = torch.Tensor(data['coords'].reshape(1, -1, 2))
+                self.distance = torch.Tensor(data['time_matrix'].reshape(1, self.n+2, self.n+2))
+                self.distance[:, :, -1] = 0
+                self.distance[:, -1, :] = 0
+                self.capacity = 700
+                demand = data['demands'] / self.capacity
+                self.demand = torch.Tensor(demand).view(1, -1, 1)
+                self.tw = torch.Tensor(data['time_windows'].reshape(-1, self.n+2, 2))
+                features = torch.cat((self.location, self.demand, self.tw / self.max_window), dim=2)
+                self.features = features
         self.time_step = 0
         self.tour_plan = torch.zeros((self.bsz, self.k, self.max_route_len+1), dtype=torch.int64)
         self.act_vind = torch.zeros((self.bsz, self.act_num, self.n + 2), dtype=torch.int64)
@@ -90,9 +105,6 @@ class LogEnv(gym.Env):
         i = actions[:, 1]
         if (i == (self.n + 1)).any():
             change_mask = i != self.n + 1
-            print(change_mask)
-            print(r[change_mask])
-            print(k[change_mask])
             if change_mask.sum() > 0:
                 self.tour_plan[r[change_mask], k[change_mask],
                            self.tour_plan[r[change_mask], k[change_mask], :].argmin(dim=1)] = i[change_mask]
@@ -102,12 +114,9 @@ class LogEnv(gym.Env):
         self.vehicle[r, k, 1] = self.distance[r, 0, i]/self.max_window
         d_t = self.vehicle[r, k, -1] + self.distance[r, self.last_location, i]/self.max_window
         self.last_location = i
-        d_f = (d_t <= self.tw[r, i, 0]/self.max_window)
-        self.vehicle[r, k, -1] = d_f.type(dtype=torch.float)*self.tw[r, i, 0]/self.max_window + (~d_f).type(dtype=torch.float)*d_t
+        d_f = (d_t <= (self.tw[r, i, 0]/self.max_window))
+        self.vehicle[r, k, -1] = d_f.type(dtype=torch.float)*(self.tw[r, i, 0]/self.max_window) + (~d_f).type(dtype=torch.float)*d_t
         self.fillness[r, k] += self.demand[r, i, 0]
-        print(i)
-        print(r)
-        print(i == self.n + 1)
         r_ind = r[i == self.n + 1]
         r_ind_other = r[i != self.n + 1]
         if len(r_ind) != 0:
@@ -118,7 +127,10 @@ class LogEnv(gym.Env):
             self.mask_visited[r_ind, k[r_ind], :-1] = 0
 
         self.mask_tw[r, k, :] = (self.vehicle[r, k, -1].reshape(-1, 1) + self.distance[r, i, :]/self.max_window) \
-                                    <= self.tw[:, :, 1]/self.max_window
+                                    <= (self.tw[:, :, 1]/self.max_window)
+        #print(self.distance[r, i, :]/self.max_window)
+        #print(self.vehicle[r, k, -1].reshape(-1, 1) + self.distance[r, i, :]/self.max_window)
+        #print(self.tw[:, :, 1]/self.max_window)
         future_weight = self.fillness[r, k].reshape(-1, 1) + self.demand[r, :, 0]
         self.mask_demand[r, k, :] = future_weight <= 1
         mask = (self.mask_demand * self.mask_tw * self.mask_visited).gather(index=self.act_vind, dim=1)

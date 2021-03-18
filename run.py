@@ -11,8 +11,8 @@ args = parser.parse_args()
 
 model = AttentionModel(active_num=1).to("cuda")
 
-best_weights, weights, name, loss, reward = train(model, 'cuda', epochs=200, problem_size=20, T=1000, lr=1e-4, batch_size=128,
-          penalty_num_vertexes=1000, penalty_num_vehicles=0)
+best_weights, weights, name, loss, reward = train(model, device="cuda", problem_size=100, num_vehicles=12,
+                            batch_size=128, epochs=50, T=1000, lr=1e-4, decay=0.001, save_inbetween=True, output=args.output)
 f = open(args.output + name +'.pkl', 'wb')
 pickle.dump(weights, f)
 f.close()

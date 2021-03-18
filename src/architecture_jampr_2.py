@@ -3,8 +3,6 @@ import torch.nn as nn
 import time
 import numpy as np
 
-from pytorch_memlab import profile, profile_every
-
 from src.attention_modules import StandardAttention, NystromAttention, PerformerAttention, LinformerAttention
 
 
@@ -62,7 +60,7 @@ class EncoderLayer(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, dm=128, num_heads=8, ff_dim=512, N=3, attention_type='standard', attention_parameters=None):
         super().__init__()
-        self.projection = nn.Linear(7, dm)
+        self.projection = nn.Linear(5, dm)
         self.encoder_layers = nn.ModuleList([EncoderLayer(dm=dm, num_heads=num_heads, ff_dim=ff_dim,
                     attention_type=attention_type, attention_parameters=attention_parameters) for _ in range(N)])
 
@@ -138,9 +136,8 @@ class AttentionModel(nn.Module):
         self.encoder = Encoder(dm=en_dm, num_heads=num_heads, ff_dim=ff_dim, N=N, attention_type=attention_type,
                                attention_parameters=attention_parameters)
         self.decoder = Decoder(en_dm=en_dm, dec_dm=dec_dm, num_heads=num_heads)
-        self.veh_emb = nn.Linear(5, veh_dim)
         self.veh_dim = veh_dim
-        self.veh_1 = nn.Linear(veh_dim, veh_dim)
+        self.veh_1 = nn.Linear(5, veh_dim)
         self.veh_2 = nn.Linear(veh_dim, veh_dim)
         self.veh_3 = nn.Linear(veh_dim, en_dm)
         self.tour_1 = nn.Linear(en_dm, veh_dim)
@@ -171,8 +168,7 @@ class AttentionModel(nn.Module):
             precomputed = (h, h_g, h_pr)
         else:
             h, h_g, h_pr = precomputed
-        vehicle_emb = self.veh_emb(vehicle_features)
-        vehicle = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_emb)))))
+        vehicle = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_features)))))
         mm = torch.matmul(vehicle, h.permute(0, 2, 1)).unsqueeze(-1)
         pwm = (vehicle[:, :, :, None] * (h.permute(0, 2, 1).unsqueeze(1))).permute(0, 1, 3, 2)
         g_a = self.lin_nodes_veh(torch.cat((mm, pwm), dim=3))
