@@ -167,6 +167,7 @@ class AttentionModel(nn.Module):
             h_pr = self.precompute(h)
             precomputed = (h, h_g, h_pr)
         else:
+            #print(precomputed)
             h, h_g, h_pr = precomputed
         vehicle = self.veh_3(self.relu(self.veh_2(self.relu(self.veh_1(vehicle_features)))))
         mm = torch.matmul(vehicle, h.permute(0, 2, 1)).unsqueeze(-1)

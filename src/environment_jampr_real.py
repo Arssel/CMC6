@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import gym
+from src.utils import create_dataset
 
 def pairwise_distance(X, p):
     if p == 'max':
@@ -11,7 +12,7 @@ def pairwise_distance(X, p):
 
 
 class LogEnv(gym.Env):
-    def __init__(self, n=20, batch_size=16, K=10, active_num=3, max_route_len=80, max_window=720):
+    def __init__(self, n=20, batch_size=16, K=5, active_num=3, max_route_len=80, max_window=720):
         super().__init__()
         self.n = n
         self.bsz = batch_size
@@ -20,9 +21,9 @@ class LogEnv(gym.Env):
         self.max_route_len = max_route_len
         self.max_window = max_window
 
-    def reset(self, full_reset=True, data=None):
+    def reset(self, full_reset=True, r=None, data=None):
         if full_reset:
-            if data is None:
+            if data is None and r is None:
                 location = torch.rand((self.bsz, self.n + 2, 2))
                 self.location = location
                 distance = pairwise_distance(location, 1)/(0.4)
@@ -54,6 +55,16 @@ class LogEnv(gym.Env):
                 tw = torch.cat((a,b), dim=2)
                 self.tw = tw
                 features = torch.cat((location, demand, tw/self.max_window), dim=2)
+                self.features = features
+            elif r is not None:
+                dataset = create_dataset(r, self.n, self.bsz)
+                self.location = torch.Tensor(dataset[0])
+                self.distance = torch.Tensor(dataset[1])
+                self.capacity = 700
+                demand = dataset[2] / self.capacity
+                self.demand = torch.Tensor(demand)
+                self.tw = torch.Tensor(dataset[3])
+                features = torch.cat((self.location, self.demand, self.tw / self.max_window), dim=2)
                 self.features = features
             else:
                 self.location = torch.Tensor(data['coords'].reshape(1, -1, 2))

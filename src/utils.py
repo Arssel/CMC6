@@ -239,7 +239,6 @@ def check_missing_vertexes(vertexes, flags, opts, n):
         penalties.append(len(left))
     return np.array(penalties)
 
-
 def path_distance_jampr(matrix, plan):
     batch_size = matrix.shape[0]
     plan_flat = plan.view(batch_size, -1)
@@ -261,4 +260,42 @@ def check_missing_vertexes_jampr(plan, n):
         left = set(np.arange(n+1)) - set(p.numpy()) - {0}
         penalties.append(len(left))
     return torch.Tensor(penalties)
-        
+
+def create_dataset(r, problem_size, batch_size):
+    dist = r[0]
+    loc = np.array(r[1])
+    demands = []
+    time_windows = []
+    coords = []
+    distances = []
+    for i in range(batch_size):
+        rand_ind = np.random.choice(dist.shape[0], size=(problem_size + 2, ), replace=False)
+        #print(rand_ind)
+        c = loc[rand_ind, :]
+        lon = (c[:, 0] - c[:, 0].min()).reshape(-1, 1)
+        lat = (c[:, 1] - c[:, 1].min()).reshape(-1, 1)
+        c = np.concatenate((lon / lon.max(), lat / lat.max()), axis=1)
+        coords.append(c)
+        d = dist[np.ix_(rand_ind, rand_ind)]
+        d += 15
+        d -= 15*np.diag([1]*(problem_size+2))
+        d[-1, :] = 0
+        d[:, -1] = 0
+        distances.append(d)
+        d = torch.as_tensor(np.random.choice(np.arange(1, 101), size=(problem_size + 2,)),dtype=torch.float)
+        d[0] = 0
+        d[-1] = 0
+        demands.append(d)
+        t = np.random.choice([0, 120, 240, 360, 480, 600], size=(problem_size + 2))
+        t1 = t + 120
+        tw = np.concatenate((t.reshape(-1, 1), t1.reshape(-1, 1)), axis=1)
+        tw[[0, problem_size + 1], 0] = 0
+        tw[0, 1] = 150
+        tw[problem_size + 1, 1] = 720
+        time_windows.append(tw)
+    demands = np.vstack(demands).reshape(batch_size, problem_size + 2, 1)
+    time_windows = np.vstack(time_windows).reshape(batch_size, problem_size + 2, 2)
+    coords = np.vstack(coords).reshape(batch_size, problem_size + 2, 2)
+    distances = np.vstack(distances).reshape(batch_size, problem_size + 2, problem_size + 2)
+    return (coords, distances, demands, time_windows)
+

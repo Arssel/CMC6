@@ -5,6 +5,7 @@ import torch
 import torch.optim as optim
 import time
 import copy
+import numpy as np
 
 from tqdm import tqdm
 import pickle
@@ -17,8 +18,9 @@ def adjust_learning_rate(optimizer, epoch, lr, decay):
     return lr_new
 
 def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, problem_size=20, decay=0.001,
-          penalty_num_vertexes=1, penalty_num_vehicles=0, num_vehicles=10, save_inbetween=False, output=None):
-    env = LogEnv(n=problem_size, batch_size=batch_size, active_num=1, K=num_vehicles)
+          penalty_num_vertexes=1, penalty_num_vehicles=0, num_vehicles=10, save_inbetween=False, output=None, r=None):
+    if not type(problem_size) is str:
+        env = LogEnv(n=problem_size, batch_size=batch_size, active_num=1, K=num_vehicles)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #writer = SummaryWriter()
     time_point = time.asctime()[4:].replace(':', '_').replace(' ', '_')
@@ -33,7 +35,10 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
 
         for step in range(T):
             global_iteration += 1
-            features, distances, mask = env.reset()
+            if type(problem_size) is str:
+                rand_pr_size = np.random.choice(np.arange(1, 151))
+                env = LogEnv(n=rand_pr_size, batch_size=batch_size, active_num=1, K=num_vehicles)
+            features, distances, mask = env.reset(r=r)
             features[0] = features[0].to(device)
             features[1] = features[1].to(device)
             flag_done = False
@@ -41,7 +46,7 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
             log_prob_seq = []
             precomputed = None
             while not flag_done:
-                v, p, precomputed = model(features, mask, t, True, precomputed)
+                v, p, precomputed = model(features, mask, t, precomputed, True)
                 v = v.to('cpu')
                 log_prob_seq.append(torch.log(p))
                 features, mask, flag_done = env.step(v)
@@ -53,9 +58,6 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
             routes_length += (env.tour_plan.sum(dim=2) > 0).type(dtype=torch.float).sum(dim=1)*float(penalty_num_vehicles)
             mf = (env.vehicle[:, :, -1].sum(dim=1).to('cpu') +
                    check_missing_vertexes_jampr(env.tour_plan, problem_size) * penalty_num_vertexes).mean()
-            #print((env.vehicle[:, :, -1].sum(dim=1).to('cpu') +
-            #       check_missing_vertexes_jampr(env.tour_plan, problem_size) * penalty_num_vertexes).mean())
-            #print((check_missing_vertexes_jampr(env.tour_plan, problem_size) * penalty_num_vertexes).mean())
 
 
             with torch.no_grad():
@@ -93,6 +95,6 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()
             del loss, log_prob_tensor
-        print(env.tour_plan[0])
+        #print(env.tour_plan[0])
     #print(reward_list)
     return best_weights, model.state_dict(), file_name, loss_list, reward_list
