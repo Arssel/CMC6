@@ -12,7 +12,8 @@ def pairwise_distance(X, p):
 
 
 class LogEnv(gym.Env):
-    def __init__(self, n=20, batch_size=16, K=5, active_num=3, max_route_len=80, max_window=720):
+    def __init__(self, n=20, batch_size=16, K=5, active_num=3, max_route_len=80, max_window=720,
+                 return_distances=False, distance_step=5):
         super().__init__()
         self.n = n
         self.bsz = batch_size
@@ -20,6 +21,8 @@ class LogEnv(gym.Env):
         self.act_num = active_num
         self.max_route_len = max_route_len
         self.max_window = max_window
+        self.return_distances = return_distances
+        self.distance_step = distance_step
 
     def reset(self, full_reset=True, r=None, data=None):
         if full_reset:
@@ -54,18 +57,14 @@ class LogEnv(gym.Env):
                 b[:, -1] = self.max_window
                 tw = torch.cat((a,b), dim=2)
                 self.tw = tw
-                features = torch.cat((location, demand, tw/self.max_window), dim=2)
-                self.features = features
             elif r is not None:
                 dataset = create_dataset(r, self.n, self.bsz)
                 self.location = torch.Tensor(dataset[0])
                 self.distance = torch.Tensor(dataset[1])
                 self.capacity = 700
                 demand = dataset[2] / self.capacity
-                self.demand = torch.Tensor(demand)
+                self.demand = torch.Tensor(demand).view(self.bsz, -1, 1)
                 self.tw = torch.Tensor(dataset[3])
-                features = torch.cat((self.location, self.demand, self.tw / self.max_window), dim=2)
-                self.features = features
             else:
                 self.location = torch.Tensor(data['coords'].reshape(1, -1, 2))
                 self.distance = torch.Tensor(data['time_matrix'].reshape(1, self.n+2, self.n+2))
@@ -75,8 +74,14 @@ class LogEnv(gym.Env):
                 demand = data['demands'] / self.capacity
                 self.demand = torch.Tensor(demand).view(1, -1, 1)
                 self.tw = torch.Tensor(data['time_windows'].reshape(-1, self.n+2, 2))
+            if self.return_distances:
+                features = torch.cat((self.location, self.demand, self.tw / self.max_window,
+                                      torch.Tensor(np.percentile(self.distance/self.max_window,
+                                                    np.arange(self.distance_step, 101, self.distance_step),
+                                                    axis=2).transpose(1, 2, 0))), dim=2)
+            else:
                 features = torch.cat((self.location, self.demand, self.tw / self.max_window), dim=2)
-                self.features = features
+            self.features = features
         self.time_step = 0
         self.tour_plan = torch.zeros((self.bsz, self.k, self.max_route_len+1), dtype=torch.int64)
         self.act_vind = torch.zeros((self.bsz, self.act_num, self.n + 2), dtype=torch.int64)

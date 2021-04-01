@@ -18,9 +18,11 @@ def adjust_learning_rate(optimizer, epoch, lr, decay):
     return lr_new
 
 def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, problem_size=20, decay=0.001,
-          penalty_num_vertexes=1, penalty_num_vehicles=0, num_vehicles=10, save_inbetween=False, output=None, r=None):
+          penalty_num_vertexes=1, penalty_num_vehicles=0, num_vehicles=10, save_inbetween=False, output=None, r=None,
+          return_distances=False, distance_step=5):
     if not type(problem_size) is str:
-        env = LogEnv(n=problem_size, batch_size=batch_size, active_num=1, K=num_vehicles)
+        env = LogEnv(n=problem_size, batch_size=batch_size, active_num=1, K=num_vehicles,
+                     return_distances=return_distances, distance_step=distance_step)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     #writer = SummaryWriter()
     time_point = time.asctime()[4:].replace(':', '_').replace(' ', '_')
@@ -37,7 +39,8 @@ def train(model, device="cuda", batch_size=256, epochs=100, T=40, lr=1e-4, probl
             global_iteration += 1
             if type(problem_size) is str:
                 rand_pr_size = np.random.choice(np.arange(1, 151))
-                env = LogEnv(n=rand_pr_size, batch_size=batch_size, active_num=1, K=num_vehicles)
+                env = LogEnv(n=rand_pr_size, batch_size=batch_size, active_num=1, K=num_vehicles,
+                     return_distances=return_distances, distance_step=distance_step)
             features, distances, mask = env.reset(r=r)
             features[0] = features[0].to(device)
             features[1] = features[1].to(device)

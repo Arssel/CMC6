@@ -58,9 +58,10 @@ class EncoderLayer(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, dm=128, num_heads=8, ff_dim=512, N=3, attention_type='standard', attention_parameters=None):
+    def __init__(self, dm=128, num_heads=8, ff_dim=512, N=3, attention_type='standard', attention_parameters=None,
+                 distance_dim=0):
         super().__init__()
-        self.projection = nn.Linear(5, dm)
+        self.projection = nn.Linear(5 + distance_dim, dm)
         self.encoder_layers = nn.ModuleList([EncoderLayer(dm=dm, num_heads=num_heads, ff_dim=ff_dim,
                     attention_type=attention_type, attention_parameters=attention_parameters) for _ in range(N)])
 
@@ -126,7 +127,7 @@ class Decoder(nn.Module):
 
 class AttentionModel(nn.Module):
     def __init__(self, en_dm=128, dec_dm=256, veh_dim=64, num_heads=8, ff_dim=512, N=3, active_num=3,
-                 attention_type='standard', attention_parameters=None):
+                 attention_type='standard', attention_parameters=None, distance_dim=0):
         super().__init__()
         self.act_num = active_num
         self.en_dm = en_dm
@@ -134,7 +135,7 @@ class AttentionModel(nn.Module):
         self.head_dim = dec_dm // num_heads
         self.num_head = num_heads
         self.encoder = Encoder(dm=en_dm, num_heads=num_heads, ff_dim=ff_dim, N=N, attention_type=attention_type,
-                               attention_parameters=attention_parameters)
+                               attention_parameters=attention_parameters, distance_dim=distance_dim)
         self.decoder = Decoder(en_dm=en_dm, dec_dm=dec_dm, num_heads=num_heads)
         self.veh_dim = veh_dim
         self.veh_1 = nn.Linear(5, veh_dim)

@@ -282,19 +282,16 @@ def create_dataset(r, problem_size, batch_size):
         d[-1, :] = 0
         d[:, -1] = 0
         distances.append(d)
-        d = torch.as_tensor(np.random.choice(np.arange(1, 101), size=(problem_size + 2,)),dtype=torch.float)
-        d[0] = 0
-        d[-1] = 0
-        demands.append(d)
-        t = np.random.choice([0, 120, 240, 360, 480, 600], size=(problem_size + 2))
-        t1 = t + 120
-        tw = np.concatenate((t.reshape(-1, 1), t1.reshape(-1, 1)), axis=1)
-        tw[[0, problem_size + 1], 0] = 0
-        tw[0, 1] = 150
-        tw[problem_size + 1, 1] = 720
-        time_windows.append(tw)
-    demands = np.vstack(demands).reshape(batch_size, problem_size + 2, 1)
-    time_windows = np.vstack(time_windows).reshape(batch_size, problem_size + 2, 2)
+    demands = torch.as_tensor(np.random.choice(np.arange(1, 101), size=(batch_size, problem_size + 2)),
+                              dtype=torch.float)
+    demands[:, 0] = 0
+    demands[:, -1] = 0
+    t = np.random.choice([0, 120, 240, 360, 480, 600], size=(batch_size, problem_size + 2))
+    t1 = t + 120
+    time_windows = np.concatenate((t.reshape(batch_size, -1, 1), t1.reshape(batch_size, -1, 1)), axis=2)
+    time_windows[:, [0, problem_size + 1], 0] = 0
+    time_windows[:, 0, 1] = 150
+    time_windows[:, problem_size + 1, 1] = 720
     coords = np.vstack(coords).reshape(batch_size, problem_size + 2, 2)
     distances = np.vstack(distances).reshape(batch_size, problem_size + 2, problem_size + 2)
     return (coords, distances, demands, time_windows)

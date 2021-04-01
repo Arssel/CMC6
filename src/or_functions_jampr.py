@@ -117,10 +117,7 @@ def compute_distance(data, eps=1e-5, time_limit=1):
     for node in range(1, len(data['time_matrix']) - 1):
         routing.AddDisjunction([manager.NodeToIndex(node)], penalty)
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-    if time_limit < 1:
-        search_parameters.time_limit.FromMilliseconds(int(time_limit*1000))
-    else:
-        search_parameters.time_limit.seconds = time_limit
+    search_parameters.time_limit.FromMilliseconds(int(time_limit*1000))
     search_parameters.local_search_metaheuristic = (
         routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
     search_parameters.first_solution_strategy = (
