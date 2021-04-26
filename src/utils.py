@@ -261,15 +261,18 @@ def check_missing_vertexes_jampr(plan, n):
         penalties.append(len(left))
     return torch.Tensor(penalties)
 
-def create_dataset(r, problem_size, batch_size):
+def create_dataset(r, problem_size, batch_size, depot=False):
     dist = r[0]
     loc = np.array(r[1])
-    demands = []
-    time_windows = []
     coords = []
     distances = []
     for i in range(batch_size):
-        rand_ind = np.random.choice(dist.shape[0], size=(problem_size + 2, ), replace=False)
+        if depot:
+            rand_ind = np.random.choice(dist.shape[0], size=(problem_size + 1,), replace=False)
+            rand_ind = np.hstack((0, rand_ind))
+            print(rand_ind)
+        else:
+            rand_ind = np.random.choice(dist.shape[0], size=(problem_size + 2, ), replace=False)
         #print(rand_ind)
         c = loc[rand_ind, :]
         lon = (c[:, 0] - c[:, 0].min()).reshape(-1, 1)

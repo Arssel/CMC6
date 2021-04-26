@@ -13,7 +13,7 @@ def pairwise_distance(X, p):
 
 class LogEnv(gym.Env):
     def __init__(self, n=20, batch_size=16, K=5, active_num=3, max_route_len=80, max_window=720,
-                 return_distances=False, distance_step=5):
+                 return_distances=False, distance_step=5, with_depot=False):
         super().__init__()
         self.n = n
         self.bsz = batch_size
@@ -23,6 +23,7 @@ class LogEnv(gym.Env):
         self.max_window = max_window
         self.return_distances = return_distances
         self.distance_step = distance_step
+        self.wd = with_depot
 
     def reset(self, full_reset=True, r=None, data=None):
         if full_reset:
@@ -58,7 +59,7 @@ class LogEnv(gym.Env):
                 tw = torch.cat((a,b), dim=2)
                 self.tw = tw
             elif r is not None:
-                dataset = create_dataset(r, self.n, self.bsz)
+                dataset = create_dataset(r, self.n, self.bsz, self.wd)
                 self.location = torch.Tensor(dataset[0])
                 self.distance = torch.Tensor(dataset[1])
                 self.capacity = 700
@@ -66,14 +67,16 @@ class LogEnv(gym.Env):
                 self.demand = torch.Tensor(demand).view(self.bsz, -1, 1)
                 self.tw = torch.Tensor(dataset[3])
             else:
-                self.location = torch.Tensor(data['coords'].reshape(1, -1, 2))
-                self.distance = torch.Tensor(data['time_matrix'].reshape(1, self.n+2, self.n+2))
+                self.location = torch.repeat_interleave(torch.Tensor(data['coords'].reshape(1, -1, 2)), self.bsz, dim=0)
+                self.distance = torch.repeat_interleave(torch.Tensor(data['time_matrix'].reshape(1, self.n+2, self.n+2)),
+                                                        self.bsz, dim=0)
                 self.distance[:, :, -1] = 0
                 self.distance[:, -1, :] = 0
                 self.capacity = 700
                 demand = data['demands'] / self.capacity
-                self.demand = torch.Tensor(demand).view(1, -1, 1)
-                self.tw = torch.Tensor(data['time_windows'].reshape(-1, self.n+2, 2))
+                self.demand = torch.repeat_interleave(torch.Tensor(demand).view(1, -1, 1), self.bsz, dim=0)
+                self.tw = torch.repeat_interleave(torch.Tensor(data['time_windows'].reshape(-1, self.n+2, 2)),
+                                                  self.bsz, dim=0)
             if self.return_distances:
                 features = torch.cat((self.location, self.demand, self.tw / self.max_window,
                                       torch.Tensor(np.percentile(self.distance/self.max_window,

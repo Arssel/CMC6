@@ -1,109 +1,118 @@
 import numpy as np
 import torch
+from tqdm import tqdm
+import time
 
-from src.environment import LogEnv
-from sklearn.metrics import pairwise_distances
-from src.utils import path_distance_new, check_missing_vertexes
+from src.environment_real import LogEnv
+from src.utils import path_distance_jampr, check_missing_vertexes_jampr
 from src.or_functions import compute_distance
 
-def compute_mean_metric(model, device="cuda", n=20, batch_size=250, T=40, opts={}, sample=False):
-    env = LogEnv(n=n, batch_size=batch_size, opts=opts)
+def compute_mean_metric(model, device="cuda", n=20, batch_size=250, T=40, sample=False):
+    env = LogEnv(n=n, batch_size=batch_size, active_num=1, K=12)
     metric = np.zeros((T,))
-    for i in range(T):
-        
-        features, distances, mask, context = env.reset()
-        features = torch.Tensor(features).to(device)
-        context = torch.Tensor(context).to(device)
-        flag_done = False
-        t = 0
-        
-        while not flag_done:
-            v, _ = model(features, mask, t, context, flags=env._flags, sample=sample)
-            v = v.to('cpu')
-            with torch.no_grad():
-                mask, flag_done, context = env.step(v)
-                context = torch.Tensor(context).to(device)
-            t += 1
+    for i in tqdm(range(T)):
+
+            features, distances, mask = env.reset()
+            features[0] = features[0].to(device)
+            features[1] = features[1].to(device)
+            flag_done = False
+            t = 0
+            precomputed = None
+            while not flag_done:
+                v, _, precomputed = model(features, mask, t, precomputed, sample)
+                v = v.to('cpu')
+                with torch.no_grad():
+                    features, mask, flag_done = env.step(v)
+                    features[1] = features[1].to(device)
+                t += 1
+            routes_length = env.vehicle[:, :, -1].sum(dim=1).to('cpu')
+            routes_length += check_missing_vertexes_jampr(env.tour_plan, n)
+            print(check_missing_vertexes_jampr(env.tour_plan, n))
+            metric[i] = routes_length.mean()
             
-        route = torch.tensor(env._cur_route, dtype=int)
-        if env._flags['tw']:
-            metric[i] = path_distance_new(env._time_d, route).mean()
-            metric[i] += (check_missing_vertexes(route, env._flags, opts, n)*4).mean()
-        else:
-            metric[i] = path_distance_new(distances, route).mean()
     return metric.mean()
 
-def compute_mean_metric_with_or(model, device="cuda", n=20, batch_size=250, T=40, options={}, sample=False, time_limit=0.5):
-    opts = options
-    env = LogEnv(n=n, batch_size=batch_size, opts=options)
+def compute_mean_metric_with_or(model, device="cuda", n=20, batch_size=250, T=40, time_limit=0.5, sample=False, eps=1e-5,
+                                K=12, r=None, return_distances=True):
+    env = LogEnv(n=n, batch_size=batch_size, active_num=1, K=K, return_distances=return_distances)
     metric_model = np.zeros((T,))
     metric_or = np.zeros((T, batch_size))
     for i in range(T):
-        
-        features, distances, mask, context = env.reset()
-        features = torch.Tensor(features).to(device)
-        context = torch.Tensor(context).to(device)
+
+        features, distances, mask = env.reset(r=r)
+        features[0] = features[0].to(device)
+        features[1] = features[1].to(device)
         flag_done = False
         t = 0
+        precomputed = None
         while not flag_done:
-            v, _ = model(features, mask, t, context, flags=env._flags, sample=sample)
+            v, _, precomputed = model(features, mask, t, precomputed, sample)
             v = v.to('cpu')
             with torch.no_grad():
-                mask, flag_done, context = env.step(v)
-                context = torch.Tensor(context).to(device)
+                features, mask, flag_done = env.step(v)
+                features[1] = features[1].to(device)
             t += 1
-        route = torch.tensor(env._cur_route, dtype=int)
-        metric_model[i] = path_distance_new(distances, route).mean()
-        dists = env._distances
-        demand = env._demand
-        
+        routes_length = env.vehicle[:, :, -1].sum(dim=1).to('cpu')
+        routes_length += check_missing_vertexes_jampr(env.tour_plan, n)
+        #print(check_missing_vertexes_jampr(env.tour_plan, n))
+        metric_model[i] = routes_length.mean()
         for j in range(batch_size):
             data = {}
-            dots = env._dots[j].squeeze()
-            data['dist'] = dists[j].squeeze()
-            if 'demand_type' in opts:
-                data['demand'] = demand[j].squeeze()
-                data['num_vehicles'] = 1
-            if 'pickup_and_delivery' in opts:
-                data['pickup_and_delivery'] = env._pairs[j].squeeze()
-                data['depot'] = np.random.choice(np.arange(env._pairs[j].squeeze().shape[0]))
-                n_x = data['pickup_and_delivery'][data['depot'], 0]
-                tmp = dots[n_x].copy()
-                dots[n_x] = dots[0]
-                dots[0] = tmp
-                print(data['pickup_and_delivery'])
-                print(n_x)
-                data['pickup_and_delivery'][data['pickup_and_delivery'] == n_x] = 30000
-                data['pickup_and_delivery'][data['pickup_and_delivery'] == 0] = data['depot']
-                data['pickup_and_delivery'][data['pickup_and_delivery'] == 30000] = 0 
-                print(data['pickup_and_delivery'])
-                data['dist'] = pairwise_distances(dots)
-                data['depot'] = 0
-            #print(data)
-            #print(opts)
-            metric_or[i, j] = compute_distance(data, eps=1e-5, time_limit=time_limit)
-            
-    return metric_model.mean(), metric_or.mean()
+            data['time_matrix'] = env.distance.numpy()[j].squeeze()
+            data['num_vehicles'] = K
+            data['time_windows'] = env.tw.numpy()[j].squeeze()
+            data['demands'] = env.demand.numpy()[j].squeeze() * env.capacity
+            data['vehicle_capacities'] = [env.capacity] * data['num_vehicles']
+            data['starts'] = [0] * data['num_vehicles']
+            data['ends'] = [n+1] * data['num_vehicles']
+            metric_or[i, j] = compute_distance(data, eps=eps, time_limit=time_limit)[0]
 
-def compute_data_metric(model, data, dist, device="cuda", n=20, opts={}, sample=False):
-    T = len(data)
-    env = LogEnv(n=n, batch_size=1, opts=opts)
-    metric = np.zeros((T,))
-    for i in range(T):
-        features, distances, mask, context = env.reset(data[i])
-        features = torch.Tensor(features).to(device)
-        context = torch.Tensor(context).to(device)
-        flag_done = False
-        t = 0
-        
-        while not flag_done:
-            v, _ = model(features, mask, t, context, flags=env._flags, sample=sample)
-            v = v.to('cpu')
-            with torch.no_grad():
-                mask, flag_done, context = env.step(v)
-                context = torch.Tensor(context).to(device)
-            t += 1
-            
-        route = torch.tensor(env._cur_route, dtype=int)
-        metric[i] = path_distance_new(dist[i], route)
-    return metric
+    return (1 - metric_model.squeeze()/metric_or.squeeze()).mean()
+
+def compute_metric_on_data(model, data, device="cuda", n=100, time_limit=0.5, sample=False, eps=1e-5, K=12,
+                           return_distances=True, bs=1):
+    env = LogEnv(n=n, batch_size=bs, active_num=1, K=K, return_distances=return_distances)
+    features, distances, mask = env.reset(data=data)
+    features[0] = features[0].to(device)
+    features[1] = features[1].to(device)
+    flag_done = False
+    t = 0
+    precomputed = None
+    while not flag_done:
+        v, _, precomputed = model(features, mask, t, precomputed, sample)
+        v = v.to('cpu')
+        with torch.no_grad():
+            features, mask, flag_done = env.step(v)
+            features[1] = features[1].to(device)
+        t += 1
+    routes_length = env.vehicle[:, :, -1].sum(dim=1).to('cpu')
+    routes_length += check_missing_vertexes_jampr(env.tour_plan, n)
+    metric_model = routes_length.min().detach().item()
+    model_route = env.tour_plan
+    metric_or, or_route = compute_distance(data, eps=eps, time_limit=time_limit)
+    return metric_model, metric_or, (model_route, or_route)
+
+def compute_metric_on_data_without_or(model, data, device="cuda", n=100, sample=False, K=12, return_distances=True, bs=1):
+    env = LogEnv(n=n, batch_size=bs, active_num=1, K=K, return_distances=return_distances)
+    features, distances, mask = env.reset(data=data)
+    features[0] = features[0].to(device)
+    features[1] = features[1].to(device)
+    flag_done = False
+    t = 0
+    precomputed = None
+    while not flag_done:
+        v, _, precomputed = model(features, mask, t, precomputed, sample)
+        v = v.to('cpu')
+        with torch.no_grad():
+            features, mask, flag_done = env.step(v)
+            features[1] = features[1].to(device)
+        t += 1
+    routes_length = env.vehicle[:, :, -1].sum(dim=1).to('cpu')
+    routes_length += check_missing_vertexes_jampr(env.tour_plan, n)
+    metric_model = routes_length.min().detach().item()
+    model_route = env.tour_plan
+    return metric_model, model_route
+
+def compute_metric_on_data_with_or(data, time_limit=0.5, eps=1e-5):
+    metric_or, or_route = compute_distance(data, eps=eps, time_limit=time_limit)
+    return metric_or, or_route
